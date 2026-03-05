@@ -152,7 +152,23 @@ curl http://127.0.0.1:8000/health  # 返回 {"status":"ok"} 即成功
 
 ## 知识库编辑
 
-知识库文件为 `wechat_ai_service/knowledge_base.json`（不进 Git，本地维护）：
+### 文件说明
+
+| 文件 | 说明 |
+|------|------|
+| `knowledge_base_example.json` | **示例文件**，已提交至 Git，供参考格式使用 |
+| `knowledge_base.json` | **业务数据文件**，含真实业务内容，已加入 `.gitignore` 不上传 |
+
+### 首次初始化
+
+```bash
+cd wechat_ai_service
+
+# 以示例文件为模板，创建自己的知识库
+cp knowledge_base_example.json knowledge_base.json
+```
+
+### 条目格式
 
 ```json
 {
@@ -163,7 +179,14 @@ curl http://127.0.0.1:8000/health  # 返回 {"status":"ok"} 即成功
 }
 ```
 
-使用命令行工具管理：
+| 字段 | 说明 |
+|------|------|
+| `question` | 问题描述，参与字符重叠评分 |
+| `answer` | 标准答案，命中时原文注入 AI 提示词 |
+| `keywords` | 触发词列表，每命中一词 +2 分；**宁多勿少，多写口语词和同义词** |
+| `image_url` | 命中时附带发送的图片链接，无图留空 `""` |
+
+### 命令行工具
 
 ```bash
 cd wechat_ai_service
@@ -172,6 +195,17 @@ python kb_tool.py add             # 交互式添加
 python kb_tool.py delete <序号>   # 删除
 python kb_tool.py export          # 导出为 Excel
 python kb_tool.py import          # 从 Excel 批量导入
+```
+
+### 更新知识库后部署
+
+```bash
+# 上传到服务器
+scp -i "zm_pc1.pem" wechat_ai_service/knowledge_base.json \
+  root@SERVER_IP:/opt/wechat-ai/
+
+# 重启服务（知识库在启动时加载）
+ssh -i "zm_pc1.pem" root@SERVER_IP "systemctl restart wechat-ai"
 ```
 
 ---
