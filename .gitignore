@@ -1,0 +1,31 @@
+# 环境变量（含密钥，绝对不上传）
+.env
+.env.*
+
+# SSH 私钥
+*.pem
+*.key
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+*.pyo
+venv/
+.venv/
+
+# 打包产物
+*.zip
+
+# 部署临时工具
+deploy_to_scf.py
+make_zip.ps1
+make_zip_python.py
+check_zip.ps1
+
+# 备份目录
+备份文件/
+
+# 编辑器
+.vscode/
+.idea/
+.DS_Store

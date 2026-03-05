@@ -1,0 +1,20 @@
+[Unit]
+Description=WeChat AI Service
+After=network.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/opt/wechat-ai
+EnvironmentFile=/opt/wechat-ai/.env
+ExecStart=/opt/wechat-ai/venv/bin/uvicorn main:app \
+    --host 127.0.0.1 \
+    --port 8000 \
+    --workers 1 \
+    --log-level info
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

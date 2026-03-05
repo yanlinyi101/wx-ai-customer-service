@@ -1,0 +1,788 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>客服管理后台</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f0f2f5; height: 100vh; display: flex; flex-direction: column; }
+
+  /* ── 顶部配置栏 ── */
+  #config-bar {
+    background: #1677ff;
+    color: #fff;
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  #config-bar label { font-size: 13px; white-space: nowrap; }
+  #config-bar input {
+    flex: 1;
+    padding: 4px 8px;
+    border-radius: 4px;
+    border: none;
+    font-size: 13px;
+    min-width: 0;
+  }
+  #save-config {
+    background: #fff;
+    color: #1677ff;
+    border: none;
+    padding: 5px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+
+  /* ── 主区域 ── */
+  #main { display: flex; flex: 1; overflow: hidden; }
+
+  /* ── 左侧会话列表 ── */
+  #sidebar {
+    width: 280px;
+    background: #fff;
+    border-right: 1px solid #e8e8e8;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+  }
+  #sidebar-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid #e8e8e8;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  #sidebar-header h2 { font-size: 14px; font-weight: 600; color: #333; }
+  #status-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: #ccc;
+    display: inline-block;
+    margin-right: 4px;
+  }
+  #status-dot.online { background: #52c41a; }
+  #refresh-btn {
+    background: none;
+    border: 1px solid #d9d9d9;
+    border-radius: 4px;
+    padding: 3px 8px;
+    cursor: pointer;
+    font-size: 12px;
+    color: #666;
+  }
+  #refresh-btn:hover { border-color: #1677ff; color: #1677ff; }
+
+  #session-list { flex: 1; overflow-y: auto; }
+  .session-item {
+    padding: 12px 16px;
+    border-bottom: 1px solid #f5f5f5;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .session-item:hover { background: #f5f5f5; }
+  .session-item.active { background: #e6f4ff; border-right: 3px solid #1677ff; }
+  .session-item.new-session { background: #fff7e6; }
+  .session-item .session-id {
+    font-size: 13px;
+    font-weight: 600;
+    color: #333;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .session-item .session-id .badge {
+    background: #1677ff;
+    color: #fff;
+    border-radius: 10px;
+    padding: 1px 7px;
+    font-size: 11px;
+    font-weight: normal;
+  }
+  .session-item .session-id .badge.new { background: #fa8c16; }
+  .session-item .session-preview {
+    font-size: 12px;
+    color: #999;
+    margin-top: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  #empty-sessions {
+    text-align: center;
+    color: #bbb;
+    padding: 40px 16px;
+    font-size: 14px;
+  }
+
+  /* ── 右侧聊天区 ── */
+  #chat-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  #chat-header {
+    padding: 12px 20px;
+    background: #fff;
+    border-bottom: 1px solid #e8e8e8;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-shrink: 0;
+  }
+  #chat-header h3 { font-size: 14px; color: #333; }
+  #close-btn {
+    background: #ff4d4f;
+    color: #fff;
+    border: none;
+    padding: 5px 14px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  #close-btn:hover { background: #ff7875; }
+  #close-btn:disabled { background: #ccc; cursor: not-allowed; }
+
+  #messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .msg-bubble {
+    max-width: 70%;
+    padding: 9px 13px;
+    border-radius: 10px;
+    font-size: 14px;
+    line-height: 1.5;
+    word-break: break-word;
+  }
+  .msg-user {
+    background: #f0f0f0;
+    color: #333;
+    align-self: flex-start;
+  }
+  .msg-agent {
+    background: #1677ff;
+    color: #fff;
+    align-self: flex-end;
+  }
+  .msg-time {
+    font-size: 11px;
+    color: #bbb;
+    margin-top: 3px;
+  }
+  .msg-row { display: flex; flex-direction: column; }
+  .msg-row.agent-row { align-items: flex-end; }
+
+  #no-session {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #bbb;
+    font-size: 15px;
+  }
+
+  /* ── 回复区 ── */
+  #reply-area {
+    border-top: 1px solid #e8e8e8;
+    background: #fff;
+    padding: 12px 16px;
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  #reply-input {
+    flex: 1;
+    border: 1px solid #d9d9d9;
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 14px;
+    resize: none;
+    outline: none;
+    transition: border-color 0.2s;
+    font-family: inherit;
+  }
+  #reply-input:focus { border-color: #1677ff; }
+  #send-btn {
+    background: #1677ff;
+    color: #fff;
+    border: none;
+    padding: 8px 18px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    align-self: flex-end;
+  }
+  #send-btn:hover { background: #4096ff; }
+  #send-btn:disabled { background: #ccc; cursor: not-allowed; }
+
+  /* ── 历史分隔线 ── */
+  .history-separator {
+    text-align: center;
+    font-size: 11px;
+    color: #aaa;
+    padding: 8px 0 4px;
+  }
+  .msg-history {
+    opacity: 0.6;
+  }
+
+  /* ── 登录页 ── */
+  #login-page {
+    position: fixed; inset: 0;
+    background: #f0f2f5;
+    display: flex; align-items: center; justify-content: center;
+    z-index: 100;
+  }
+  #login-card {
+    background: #fff;
+    border-radius: 12px;
+    padding: 40px 36px;
+    width: 360px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.1);
+  }
+  #login-card h1 { font-size: 20px; color: #333; margin-bottom: 24px; text-align: center; }
+  #login-card input {
+    width: 100%;
+    border: 1px solid #d9d9d9;
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-size: 14px;
+    margin-bottom: 12px;
+    outline: none;
+  }
+  #login-card input:focus { border-color: #1677ff; }
+  #login-btn {
+    width: 100%;
+    background: #1677ff;
+    color: #fff;
+    border: none;
+    padding: 10px;
+    border-radius: 6px;
+    font-size: 15px;
+    cursor: pointer;
+  }
+  #login-btn:hover { background: #4096ff; }
+  #login-err { color: #ff4d4f; font-size: 13px; margin-top: 8px; min-height: 18px; }
+
+  /* ── Toast ── */
+  #toast {
+    position: fixed;
+    bottom: 30px; left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0,0,0,0.75);
+    color: #fff;
+    padding: 8px 20px;
+    border-radius: 20px;
+    font-size: 13px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.3s;
+    z-index: 200;
+  }
+  #toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<!-- 登录页 -->
+<div id="login-page">
+  <div id="login-card">
+    <h1>客服管理后台</h1>
+    <input id="login-scf" type="text" placeholder="服务器地址（如 https://your-server.com）" />
+    <input id="login-token" type="password" placeholder="访问令牌 (ADMIN_TOKEN)" />
+    <button id="login-btn" onclick="doLogin()">登 录</button>
+    <div id="login-err"></div>
+  </div>
+</div>
+
+<!-- 主界面 -->
+<div id="config-bar">
+  <label>服务器地址：</label>
+  <input id="scf-url-input" type="text" placeholder="https://your-server.com" />
+  <button id="save-config" onclick="saveConfig()">保存</button>
+  <span id="status-dot"></span>
+  <span id="status-text" style="font-size:12px;">未连接</span>
+</div>
+
+<div id="main">
+  <!-- 左侧 -->
+  <div id="sidebar">
+    <div id="sidebar-header">
+      <h2>等待中的会话</h2>
+      <button id="refresh-btn" onclick="loadSessions()">刷新</button>
+    </div>
+    <div id="session-list">
+      <div id="empty-sessions">暂无等待中的用户</div>
+    </div>
+  </div>
+
+  <!-- 右侧 -->
+  <div id="chat-panel">
+    <div id="no-session">← 选择左侧用户开始处理</div>
+
+    <div id="chat-content" style="display:none; flex:1; flex-direction:column; overflow:hidden;">
+      <div id="chat-header">
+        <h3 id="chat-title">用户：—</h3>
+        <button id="close-btn" onclick="closeSession()">结束会话</button>
+      </div>
+      <div id="messages"></div>
+      <div id="reply-area">
+        <textarea id="reply-input" rows="3" placeholder="输入回复内容，Enter 换行，Ctrl+Enter 发送..."></textarea>
+        <button id="send-btn" onclick="sendReply()">发 送</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+// ── 状态 ──────────────────────────────────────────────────────────────────────
+let scfUrl = '';
+let token = '';
+let currentOpenid = null;
+let sessions = {};          // openid -> 实时会话数据（WS/HTTP轮询）
+let knownOpenids = new Set();
+let currentHistory = null;  // 当前选中用户的全量文件历史（/admin/history 返回）
+let _loadingSessions = false;
+let _loadingHistory = false;
+
+// WebSocket 状态
+let ws = null;
+let wsReconnectTimer = null;
+let wsReconnectDelay = 3000; // 指数退避起始值
+let httpFallbackTimer = null;
+
+// ── 初始化 ────────────────────────────────────────────────────────────────────
+window.onload = function() {
+  scfUrl = localStorage.getItem('scf_url') || '';
+  token  = localStorage.getItem('admin_token') || '';
+
+  const params = new URLSearchParams(location.search);
+  if (params.get('token')) token = params.get('token');
+  if (params.get('scf'))   scfUrl = params.get('scf');
+
+  if (scfUrl) document.getElementById('login-scf').value = scfUrl;
+  if (token && scfUrl) enterApp();
+};
+
+function doLogin() {
+  const scf = document.getElementById('login-scf').value.trim().replace(/\/$/, '');
+  const tok = document.getElementById('login-token').value.trim();
+  const err = document.getElementById('login-err');
+  if (!scf) { err.textContent = '请填写服务器地址'; return; }
+  if (!tok) { err.textContent = '请填写访问令牌'; return; }
+  err.textContent = '';
+  scfUrl = scf;
+  token  = tok;
+  localStorage.setItem('scf_url', scfUrl);
+  localStorage.setItem('admin_token', token);
+  enterApp();
+}
+
+function enterApp() {
+  document.getElementById('login-page').style.display = 'none';
+  document.getElementById('scf-url-input').value = scfUrl;
+  loadSessions();
+  connectWS();
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      loadSessions();
+      if (!ws || ws.readyState !== WebSocket.OPEN) connectWS();
+    }
+  });
+}
+
+// ── WebSocket ─────────────────────────────────────────────────────────────────
+function startBackupPolling() {
+  if (httpFallbackTimer) return;
+  httpFallbackTimer = setInterval(loadSessions, 10000); // 10s 轮询
+}
+
+function connectWS() {
+  if (!scfUrl || !token) return;
+  clearTimeout(wsReconnectTimer);
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+
+  const wsBase = scfUrl.replace(/^https?:\/\//, '').replace(/\/$/, '');
+  const protocol = scfUrl.startsWith('https') ? 'wss' : 'ws';
+  const url = `${protocol}://${wsBase}/ws/admin?token=${encodeURIComponent(token)}`;
+
+  const thisWs = new WebSocket(url);
+  ws = thisWs;
+
+  thisWs.onopen = () => {
+    if (ws !== thisWs) return;
+    wsReconnectDelay = 3000; // 连接成功后重置退避
+    setStatus('online', '已连接');
+    clearTimeout(wsReconnectTimer);
+    startBackupPolling();
+    thisWs._pingTimer = setInterval(() => {
+      if (thisWs.readyState === WebSocket.OPEN) thisWs.send('ping');
+    }, 25000);
+  };
+
+  thisWs.onmessage = (evt) => {
+    if (evt.data === 'pong') return;
+    try {
+      const msg = JSON.parse(evt.data);
+      if (msg.type === 'sessions') handleSessionsData(msg.sessions);
+    } catch(e) {}
+  };
+
+  thisWs.onclose = () => {
+    clearInterval(thisWs._pingTimer);
+    if (ws !== thisWs) return;
+    setStatus('', `重连中...`);
+    // 指数退避重连（最大30s）
+    wsReconnectDelay = Math.min(wsReconnectDelay * 1.5, 30000);
+    wsReconnectTimer = setTimeout(connectWS, wsReconnectDelay);
+    startBackupPolling();
+  };
+
+  thisWs.onerror = () => { thisWs.close(); };
+}
+
+function setStatus(dotClass, text) {
+  document.getElementById('status-dot').className = dotClass;
+  document.getElementById('status-text').textContent = text;
+}
+
+function handleSessionsData(sessionsArr) {
+  const newSessions = {};
+  for (const s of sessionsArr) newSessions[s.openid] = s;
+
+  const newOids = [];
+  for (const oid of Object.keys(newSessions)) {
+    if (!knownOpenids.has(oid)) newOids.push(oid);
+  }
+  if (newOids.length > 0) {
+    showToast('有新的人工服务请求！');
+    document.title = '【新消息】客服管理后台';
+    setTimeout(() => { document.title = '客服管理后台'; }, 5000);
+  }
+
+  // 检测当前会话是否有新消息，有则刷新历史
+  if (currentOpenid && newSessions[currentOpenid]) {
+    const old = sessions[currentOpenid];
+    const cur = newSessions[currentOpenid];
+    if (!old || cur.count > old.count) {
+      fetchHistory(currentOpenid); // 有新消息，拉取最新历史
+    }
+  }
+
+  sessions = newSessions;
+  knownOpenids = new Set(Object.keys(sessions));
+  renderSessionList(newOids);
+
+  if (currentOpenid && !sessions[currentOpenid]) {
+    currentOpenid = null;
+    currentHistory = null;
+    showChatPanel(false);
+  } else if (currentOpenid && !_loadingHistory) {
+    renderMessages(currentOpenid);
+  }
+}
+
+function saveConfig() {
+  scfUrl = document.getElementById('scf-url-input').value.trim().replace(/\/$/, '');
+  localStorage.setItem('scf_url', scfUrl);
+  showToast('已保存');
+  loadSessions();
+  if (ws) { ws.close(); ws = null; }
+  connectWS();
+}
+
+// ── 加载会话列表（HTTP 轮询） ──────────────────────────────────────────────────
+async function loadSessions() {
+  if (!scfUrl || !token) return;
+  if (_loadingSessions) return;
+  _loadingSessions = true;
+  try {
+    const res = await fetch(
+      `${scfUrl}/admin/sessions?token=${encodeURIComponent(token)}`,
+      { signal: AbortSignal.timeout(15000) }
+    );
+    if (res.ok) {
+      if (!ws || ws.readyState !== WebSocket.OPEN) setStatus('online', '已连接(HTTP)');
+      const data = await res.json();
+      if (data.ok) handleSessionsData(data.sessions);
+    } else if (res.status === 401) {
+      setStatus('', '令牌错误');
+    } else {
+      if (!ws || ws.readyState !== WebSocket.OPEN) setStatus('', '重连中...');
+    }
+  } catch(e) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) setStatus('', '重连中...');
+  } finally {
+    _loadingSessions = false;
+  }
+}
+
+// ── 获取用户全量聊天历史（文件持久化数据） ─────────────────────────────────────
+async function fetchHistory(oid) {
+  if (!scfUrl || !token || !oid) return;
+  _loadingHistory = true;
+  try {
+    const res = await fetch(
+      `${scfUrl}/admin/history/${encodeURIComponent(oid)}?token=${encodeURIComponent(token)}`,
+      { signal: AbortSignal.timeout(10000) }
+    );
+    if (res.ok) {
+      const data = await res.json();
+      if (data.ok && oid === currentOpenid) {
+        currentHistory = data.sessions || [];
+        renderMessages(oid);
+      }
+    }
+  } catch(e) {
+    // 网络错误时回退到内存数据，不打断显示
+  } finally {
+    _loadingHistory = false;
+  }
+}
+
+// ── 渲染会话列表 ───────────────────────────────────────────────────────────────
+function renderSessionList(newOids) {
+  const list = document.getElementById('session-list');
+  const empty = document.getElementById('empty-sessions');
+  const keys = Object.keys(sessions);
+  if (keys.length === 0) {
+    list.innerHTML = '';
+    list.appendChild(empty);
+    empty.style.display = '';
+    return;
+  }
+  empty.style.display = 'none';
+  list.innerHTML = '';
+  for (const oid of keys) {
+    const s = sessions[oid];
+    const isNew = newOids && newOids.includes(oid);
+    const allMsgs = s.messages || [];
+    const lastMsg = allMsgs.length > 0 ? allMsgs[allMsgs.length - 1].text : '（无消息）';
+    const div = document.createElement('div');
+    div.className = 'session-item' + (oid === currentOpenid ? ' active' : '') + (isNew ? ' new-session' : '');
+    div.innerHTML = `
+      <div class="session-id">
+        <span>用户 ${s.short}...</span>
+        <span class="badge${isNew ? ' new' : ''}">${s.count} 条</span>
+      </div>
+      <div class="session-preview">${escHtml(lastMsg)}</div>
+    `;
+    div.onclick = () => selectSession(oid);
+    list.appendChild(div);
+  }
+}
+
+// ── 选中会话 ──────────────────────────────────────────────────────────────────
+function selectSession(oid) {
+  currentOpenid = oid;
+  currentHistory = null; // 清空旧历史
+  showChatPanel(true);
+  renderSessionList([]);
+  renderMessages(oid);   // 先用内存数据快速渲染
+  fetchHistory(oid);     // 再拉取完整文件历史
+}
+
+function showChatPanel(show) {
+  const noSess = document.getElementById('no-session');
+  const chatContent = document.getElementById('chat-content');
+  if (show) {
+    noSess.style.display = 'none';
+    chatContent.style.display = 'flex';
+  } else {
+    noSess.style.display = 'flex';
+    chatContent.style.display = 'none';
+    document.getElementById('chat-title').textContent = '用户：—';
+  }
+}
+
+// ── 渲染消息 ──────────────────────────────────────────────────────────────────
+function renderMessages(oid) {
+  const s = sessions[oid];
+  if (!s) return;
+
+  const container = document.getElementById('messages');
+  const scrolledToBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 60;
+  container.innerHTML = '';
+
+  if (currentHistory && currentHistory.length > 0) {
+    // ── 从文件历史渲染（完整 AI + 人工记录）──────────────────────────────────
+    document.getElementById('chat-title').textContent = `用户：${s.short}... （完整记录）`;
+
+    let allFileTs = 0;
+    for (const session of currentHistory) {
+      const isHuman = session.session_id.startsWith('human_');
+      const label = isHuman ? '── 人工接待 ──' : '── AI 对话 ──';
+      const sep = document.createElement('div');
+      sep.className = 'history-separator';
+      sep.textContent = label;
+      container.appendChild(sep);
+
+      for (const m of session.log) {
+        appendMsgBubble(container, m.role, m.text, m.ts);
+        if (m.ts > allFileTs) allFileTs = m.ts;
+      }
+    }
+
+    // 追加文件中还没写入的实时内存消息（避免重复显示）
+    const inMemNew = (s.messages || []).filter(m => m.ts > allFileTs);
+    if (inMemNew.length > 0) {
+      const sep2 = document.createElement('div');
+      sep2.className = 'history-separator';
+      sep2.textContent = '── 最新消息 ──';
+      container.appendChild(sep2);
+      for (const m of inMemNew.sort((a, b) => a.ts - b.ts)) {
+        appendMsgBubble(container, m.role, m.text, m.ts);
+      }
+    }
+  } else {
+    // ── 回退：用内存数据渲染（文件未加载完成时的快速显示）────────────────────
+    document.getElementById('chat-title').textContent = `用户：${s.short}... （共 ${s.count} 条）`;
+
+    const preHist = (s.pre_history || []).slice(-5);
+    if (preHist.length > 0) {
+      const sep1 = document.createElement('div');
+      sep1.className = 'history-separator';
+      sep1.textContent = `── 转人工前最近 ${preHist.length} 条对话 ──`;
+      container.appendChild(sep1);
+      for (const m of preHist) {
+        appendMsgBubble(container, m.role === 'assistant' ? 'agent' : m.role, m.text, 0);
+      }
+      const sep2 = document.createElement('div');
+      sep2.className = 'history-separator';
+      sep2.textContent = '── 人工对话 ──';
+      container.appendChild(sep2);
+    }
+
+    for (const m of (s.messages || []).sort((a, b) => a.ts - b.ts)) {
+      appendMsgBubble(container, m.role, m.text, m.ts);
+    }
+  }
+
+  if (scrolledToBottom) container.scrollTop = container.scrollHeight;
+}
+
+function appendMsgBubble(container, role, text, ts) {
+  const isAgent = role === 'agent';
+  const row = document.createElement('div');
+  row.className = 'msg-row' + (isAgent ? ' agent-row' : '');
+  const bubble = document.createElement('div');
+  bubble.className = 'msg-bubble ' + (isAgent ? 'msg-agent' : 'msg-user');
+  bubble.textContent = text;
+  row.appendChild(bubble);
+  if (ts > 0) {
+    const timeEl = document.createElement('div');
+    timeEl.className = 'msg-time';
+    timeEl.textContent = (isAgent ? '客服 · ' : role === 'ai' ? 'AI · ' : '用户 · ') + formatTime(ts);
+    row.appendChild(timeEl);
+  }
+  container.appendChild(row);
+}
+
+// ── 发送回复 ──────────────────────────────────────────────────────────────────
+async function sendReply() {
+  if (!currentOpenid) return;
+  const input = document.getElementById('reply-input');
+  const text = input.value.trim();
+  if (!text) return;
+
+  const btn = document.getElementById('send-btn');
+  btn.disabled = true;
+
+  try {
+    const res = await fetch(`${scfUrl}/admin/reply?token=${encodeURIComponent(token)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ openid: currentOpenid, message: text }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      input.value = '';
+      showToast('发送成功');
+      // 发送后立即拉取最新历史（文件已写入）
+      await fetchHistory(currentOpenid);
+    } else {
+      showToast('发送失败：' + (data.error || '未知错误'));
+    }
+  } catch(e) {
+    showToast('网络错误，请重试');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ── 结束会话 ──────────────────────────────────────────────────────────────────
+async function closeSession() {
+  if (!currentOpenid) return;
+  if (!confirm(`确认结束用户 ${currentOpenid.slice(0, 8)}... 的会话？用户将恢复 AI 模式。`)) return;
+
+  const btn = document.getElementById('close-btn');
+  btn.disabled = true;
+
+  try {
+    const res = await fetch(`${scfUrl}/admin/close?token=${encodeURIComponent(token)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ openid: currentOpenid }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      showToast('会话已结束，用户已恢复 AI 模式');
+      delete sessions[currentOpenid];
+      knownOpenids.delete(currentOpenid);
+      currentOpenid = null;
+      currentHistory = null;
+      showChatPanel(false);
+      renderSessionList([]);
+    } else {
+      showToast('操作失败：' + (data.error || ''));
+    }
+  } catch(e) {
+    showToast('网络错误，请重试');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ── Ctrl+Enter 发送 ───────────────────────────────────────────────────────────
+document.addEventListener('keydown', function(e) {
+  if (e.ctrlKey && e.key === 'Enter') {
+    const inp = document.getElementById('reply-input');
+    if (document.activeElement === inp) sendReply();
+  }
+});
+
+// ── 工具函数 ──────────────────────────────────────────────────────────────────
+function formatTime(ts) {
+  const d = new Date(ts * 1000);
+  const pad = n => String(n).padStart(2, '0');
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function escHtml(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+let toastTimer;
+function showToast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2500);
+}
+</script>
+</body>
+</html>
