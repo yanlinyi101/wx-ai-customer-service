@@ -172,6 +172,24 @@ async def send_image_message(openid: str, media_id: str) -> bool:
     return True
 
 
+async def download_user_image(pic_url: str, save_path: str) -> bool:
+    """
+    下载用户发送的图片（PicUrl 是公开临时 URL，无需 token）并保存到本地。
+    返回 True 表示成功，False 表示失败。
+    """
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(pic_url)
+            resp.raise_for_status()
+            with open(save_path, "wb") as f:
+                f.write(resp.content)
+        logger.info(f"[图片下载] 成功 save_path={save_path}")
+        return True
+    except Exception as e:
+        logger.error(f"[图片下载] 失败 url={pic_url} err={e}")
+        return False
+
+
 async def send_typing_indicator(openid: str) -> None:
     """
     显示"客服正在输入"状态，提升用户体验

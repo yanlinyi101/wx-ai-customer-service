@@ -12,9 +12,11 @@ FastAPI 主入口
 import asyncio
 import json
 import logging
+import os
 import time
+import uuid
 
-from fastapi import BackgroundTasks, FastAPI, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi import BackgroundTasks, FastAPI, File, Form, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 
@@ -27,6 +29,8 @@ from config import (
     KF_ACCOUNT,
     ADMIN_TOKEN,
     ADMIN_OPENID,
+    IMAGE_DIR,
+    IMAGE_BASE_URL,
 )
 from crypto import WeChatCrypto
 from human_service import (
@@ -38,6 +42,7 @@ from human_service import (
     save_pre_history,
 )
 from wechat_api import (
+    download_user_image,
     get_or_upload_media,
     send_image_message,
     send_text_message,
@@ -308,8 +313,19 @@ async def receive_message(
         if event == "user_enter_tempsession":
             background_tasks.add_task(_send_welcome, openid)
 
+    elif msg_type == "image":
+        pic_url = msg.get("PicUrl", "")
+        if await is_human_mode(openid):
+            # 人工模式：下载图片并推送给客服后台
+            background_tasks.add_task(_handle_human_image, openid, pic_url)
+        else:
+            # AI 模式：暂不支持图片
+            background_tasks.add_task(
+                send_text_message, openid, "您好，目前仅支持文字消息，请用文字描述您的问题 😊"
+            )
+
     else:
-        # 图片、语音等暂不支持，友好提示
+        # 语音等其他类型暂不支持，友好提示
         background_tasks.add_task(
             send_text_message, openid, "您好，目前仅支持文字消息，请用文字描述您的问题 😊"
         )
@@ -385,6 +401,61 @@ async def admin_close(request: Request, token: str = Query("")):
     session_id = _human_sessions.pop(openid, None)
     if session_id:
         await end_chat_session(openid, session_id)
+    return {"ok": True}
+
+
+@app.post("/admin/reply_image")
+async def admin_reply_image(
+    token: str = Query(""),
+    openid: str = Form(...),
+    image: UploadFile = File(...),
+):
+    """客服发送图片消息（multipart/form-data）"""
+    if not _check_admin(token):
+        return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+    if not openid:
+        return JSONResponse({"ok": False, "error": "openid 不能为空"}, status_code=400)
+    if not IMAGE_BASE_URL:
+        return JSONResponse({"ok": False, "error": "IMAGE_BASE_URL 未配置"}, status_code=500)
+
+    # 推断扩展名
+    ext = "jpg"
+    if image.filename:
+        suffix = image.filename.rsplit(".", 1)[-1].lower()
+        if suffix in ("jpg", "jpeg", "png", "gif", "webp"):
+            ext = suffix
+
+    filename = f"agent_{openid[:8]}_{uuid.uuid4().hex}.{ext}"
+    save_path = os.path.join(IMAGE_DIR, filename)
+    os.makedirs(IMAGE_DIR, exist_ok=True)
+
+    try:
+        content = await image.read()
+        with open(save_path, "wb") as f:
+            f.write(content)
+    except Exception as e:
+        logger.error(f"[admin_reply_image] 保存失败: {e}")
+        return JSONResponse({"ok": False, "error": "图片保存失败"}, status_code=500)
+
+    accessible_url = f"{IMAGE_BASE_URL.rstrip('/')}/{filename}"
+
+    # 上传微信临时素材并发送给用户
+    media_id = await get_or_upload_media(accessible_url)
+    if not media_id:
+        return JSONResponse({"ok": False, "error": "微信素材上传失败"}, status_code=500)
+
+    success = await send_image_message(openid, media_id)
+    if not success:
+        return JSONResponse({"ok": False, "error": "微信图片发送失败"}, status_code=500)
+
+    session_id = _human_sessions.get(openid, f"human_{int(time.time())}")
+    ts_now = time.time()
+    await append_log(openid, "agent", "", ts_now, session_id,
+                     image_url=accessible_url, msg_type="image")
+    await push_message(openid, text="", role="agent",
+                       image_url=accessible_url, msg_type="image")
+    await _broadcast_sessions()
+    logger.info(f"[admin_reply_image] 发送成功 openid={openid[:8]}...")
     return {"ok": True}
 
 
@@ -466,6 +537,38 @@ async def _handle_human_queue(openid: str, text: str) -> None:
     session_id = _human_sessions.get(openid, f"human_{int(time.time())}")
     await append_log(openid, "user", text, time.time(), session_id)
     await _broadcast_sessions()
+
+
+async def _handle_human_image(openid: str, pic_url: str) -> None:
+    """人工模式下用户发图片：下载到本地 → 推送后台"""
+    if not IMAGE_BASE_URL or not pic_url:
+        logger.warning(f"[human_image] IMAGE_BASE_URL 未配置或 pic_url 为空，跳过")
+        return
+
+    ext = "jpg"
+    if "." in pic_url.split("?")[0].split("/")[-1]:
+        suffix = pic_url.split("?")[0].rsplit(".", 1)[-1].lower()
+        if suffix in ("jpg", "jpeg", "png", "gif", "webp"):
+            ext = suffix
+
+    filename = f"{openid[:8]}_{uuid.uuid4().hex}.{ext}"
+    save_path = os.path.join(IMAGE_DIR, filename)
+    os.makedirs(IMAGE_DIR, exist_ok=True)
+
+    ok = await download_user_image(pic_url, save_path)
+    if not ok:
+        logger.error(f"[human_image] 下载失败 openid={openid[:8]}")
+        return
+
+    accessible_url = f"{IMAGE_BASE_URL.rstrip('/')}/{filename}"
+    session_id = _human_sessions.get(openid, f"human_{int(time.time())}")
+    ts_now = time.time()
+    await push_message(openid, text="", role="user",
+                       image_url=accessible_url, msg_type="image")
+    await append_log(openid, "user", "", ts_now, session_id,
+                     image_url=accessible_url, msg_type="image")
+    await _broadcast_sessions()
+    logger.info(f"[human_image] 已处理用户图片 openid={openid[:8]} url={accessible_url}")
 
 
 async def _handle_text(openid: str, text: str) -> None:

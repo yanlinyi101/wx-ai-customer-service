@@ -47,12 +47,21 @@ async def exit_human_mode(openid: str) -> None:
     logger.debug(f"[human_service] 退出人工模式 openid={openid[:8]}")
 
 
-async def push_message(openid: str, text: str, role: str = "user") -> None:
+async def push_message(
+    openid: str,
+    text: str = "",
+    role: str = "user",
+    image_url: str = "",
+    msg_type: str = "text",
+) -> None:
     """将消息追加到缓冲队列。role 可为 'user' 或 'agent'"""
     queue = _human_queue[openid]
     if len(queue) >= _MAX_QUEUE:
         queue.pop(0)
-    queue.append({"text": text, "ts": time.time(), "role": role})
+    entry: dict = {"text": text, "ts": time.time(), "role": role, "msg_type": msg_type}
+    if image_url:
+        entry["image_url"] = image_url
+    queue.append(entry)
 
 
 def save_pre_history(openid: str, ai_history: list) -> None:

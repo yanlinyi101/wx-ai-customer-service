@@ -66,7 +66,15 @@ def _save_sync(openid: str, data: dict) -> None:
 
 # ─── 公共异步 API ──────────────────────────────────────────────────────────────
 
-async def append_log(openid: str, role: str, text: str, ts: float, session_id: str) -> None:
+async def append_log(
+    openid: str,
+    role: str,
+    text: str,
+    ts: float,
+    session_id: str,
+    image_url: str = "",
+    msg_type: str = "text",
+) -> None:
     """
     追加一条记录到本地 JSON 日志（始终生效，无需配置开关）。
     role: 'user' | 'ai' | 'agent'
@@ -85,7 +93,10 @@ async def append_log(openid: str, role: str, text: str, ts: float, session_id: s
                     "log": [],
                 }
                 sessions.append(session)
-            session["log"].append({"role": role, "text": text, "ts": ts})
+            entry: dict = {"role": role, "text": text, "ts": ts, "msg_type": msg_type}
+            if image_url:
+                entry["image_url"] = image_url
+            session["log"].append(entry)
             await loop.run_in_executor(None, _save_sync, openid, data)
         except Exception as e:
             logger.error(f"[chat_logger] append_log 失败 openid={openid[:8]}: {e}")

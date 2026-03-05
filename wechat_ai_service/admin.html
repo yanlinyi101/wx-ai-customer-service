@@ -226,6 +226,26 @@
   #send-btn:hover { background: #4096ff; }
   #send-btn:disabled { background: #ccc; cursor: not-allowed; }
 
+  /* ── 图片消息 ── */
+  .msg-image {
+    max-width: 200px;
+    border-radius: 8px;
+    cursor: pointer;
+    display: block;
+  }
+
+  /* ── 图片上传按钮 ── */
+  #img-upload-label {
+    display: flex;
+    align-items: flex-end;
+    cursor: pointer;
+    font-size: 20px;
+    padding-bottom: 6px;
+    line-height: 1;
+    user-select: none;
+  }
+  #img-upload-input { display: none; }
+
   /* ── 历史分隔线 ── */
   .history-separator {
     text-align: center;
@@ -338,6 +358,10 @@
       </div>
       <div id="messages"></div>
       <div id="reply-area">
+        <label id="img-upload-label" title="发送图片">
+          📷
+          <input id="img-upload-input" type="file" accept="image/*" onchange="sendImage(this)" />
+        </label>
         <textarea id="reply-input" rows="3" placeholder="输入回复内容，Enter 换行，Ctrl+Enter 发送..."></textarea>
         <button id="send-btn" onclick="sendReply()">发 送</button>
       </div>
@@ -570,7 +594,10 @@ function renderSessionList(newOids) {
     const s = sessions[oid];
     const isNew = newOids && newOids.includes(oid);
     const allMsgs = s.messages || [];
-    const lastMsg = allMsgs.length > 0 ? allMsgs[allMsgs.length - 1].text : '（无消息）';
+    const lastMsgObj = allMsgs.length > 0 ? allMsgs[allMsgs.length - 1] : null;
+    const lastMsg = lastMsgObj
+      ? (lastMsgObj.msg_type === 'image' ? '[图片]' : (lastMsgObj.text || '（无消息）'))
+      : '（无消息）';
     const div = document.createElement('div');
     div.className = 'session-item' + (oid === currentOpenid ? ' active' : '') + (isNew ? ' new-session' : '');
     div.innerHTML = `
@@ -631,7 +658,7 @@ function renderMessages(oid) {
       container.appendChild(sep);
 
       for (const m of session.log) {
-        appendMsgBubble(container, m.role, m.text, m.ts);
+        appendMsgBubble(container, m);
         if (m.ts > allFileTs) allFileTs = m.ts;
       }
     }
@@ -644,7 +671,7 @@ function renderMessages(oid) {
       sep2.textContent = '── 最新消息 ──';
       container.appendChild(sep2);
       for (const m of inMemNew.sort((a, b) => a.ts - b.ts)) {
-        appendMsgBubble(container, m.role, m.text, m.ts);
+        appendMsgBubble(container, m);
       }
     }
   } else {
@@ -658,7 +685,7 @@ function renderMessages(oid) {
       sep1.textContent = `── 转人工前最近 ${preHist.length} 条对话 ──`;
       container.appendChild(sep1);
       for (const m of preHist) {
-        appendMsgBubble(container, m.role === 'assistant' ? 'agent' : m.role, m.text, 0);
+        appendMsgBubble(container, { ...m, role: m.role === 'assistant' ? 'agent' : m.role, ts: 0 });
       }
       const sep2 = document.createElement('div');
       sep2.className = 'history-separator';
@@ -667,21 +694,32 @@ function renderMessages(oid) {
     }
 
     for (const m of (s.messages || []).sort((a, b) => a.ts - b.ts)) {
-      appendMsgBubble(container, m.role, m.text, m.ts);
+      appendMsgBubble(container, m);
     }
   }
 
   if (scrolledToBottom) container.scrollTop = container.scrollHeight;
 }
 
-function appendMsgBubble(container, role, text, ts) {
+function appendMsgBubble(container, msg) {
+  const role = msg.role;
   const isAgent = role === 'agent';
   const row = document.createElement('div');
   row.className = 'msg-row' + (isAgent ? ' agent-row' : '');
   const bubble = document.createElement('div');
   bubble.className = 'msg-bubble ' + (isAgent ? 'msg-agent' : 'msg-user');
-  bubble.textContent = text;
+  if (msg.msg_type === 'image' && msg.image_url) {
+    const img = document.createElement('img');
+    img.src = msg.image_url;
+    img.className = 'msg-image';
+    img.alt = '[图片]';
+    img.onclick = () => window.open(msg.image_url, '_blank');
+    bubble.appendChild(img);
+  } else {
+    bubble.textContent = msg.text || '';
+  }
   row.appendChild(bubble);
+  const ts = msg.ts || 0;
   if (ts > 0) {
     const timeEl = document.createElement('div');
     timeEl.className = 'msg-time';
@@ -773,6 +811,34 @@ function formatTime(ts) {
 
 function escHtml(str) {
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── 发送图片 ──────────────────────────────────────────────────────────────────
+async function sendImage(input) {
+  if (!currentOpenid || !input.files || !input.files[0]) return;
+  const file = input.files[0];
+  input.value = ''; // 清空，允许重复选同一文件
+
+  const formData = new FormData();
+  formData.append('openid', currentOpenid);
+  formData.append('image', file);
+
+  try {
+    showToast('图片发送中...');
+    const res = await fetch(`${scfUrl}/admin/reply_image?token=${encodeURIComponent(token)}`, {
+      method: 'POST',
+      body: formData,
+    });
+    const data = await res.json();
+    if (data.ok) {
+      showToast('图片发送成功');
+      await fetchHistory(currentOpenid);
+    } else {
+      showToast('发送失败：' + (data.error || '未知错误'));
+    }
+  } catch(e) {
+    showToast('网络错误，请重试');
+  }
 }
 
 let toastTimer;
