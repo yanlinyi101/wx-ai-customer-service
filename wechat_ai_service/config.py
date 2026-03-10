@@ -1,3 +1,18 @@
+"""
+配置模块
+
+所有配置项均可通过 .env 文件或环境变量覆盖。
+
+意图路由阈值（INTENT_*_THRESHOLD）：
+    RAG top_score 的分界值，决定消息被路由到哪种回复模式。
+    可在 .env 中设置 INTENT_LOW_THRESHOLD / INTENT_HIGH_THRESHOLD 动态调整，无需改代码。
+
+三套系统提示词：
+    CHAT_SYSTEM_PROMPT  — 闲聊模式，亲和友好
+    VAGUE_SYSTEM_PROMPT — 模糊问题模式，引导追问
+    CLEAR_SYSTEM_PROMPT — 明确问题模式，基于知识库回答（含 {context} 占位符）
+"""
+
 import os
 from dotenv import load_dotenv
 

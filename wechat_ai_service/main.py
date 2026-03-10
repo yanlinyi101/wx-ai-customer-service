@@ -2,11 +2,15 @@
 微信小程序 AI 客服 Webhook 服务
 FastAPI 主入口
 
-本地启动命令：
-    uvicorn main:app --host 0.0.0.0 --port 8000
+消息处理流程：
+    微信消息 → crypto.py 解密 → 意图路由（ai_service）→ 火山方舟 LLM → 微信 API 回复
+    转人工关键词命中时跳过 LLM，直接触发 human_service 转接客服
 
-腾讯云函数（SCF Web函数）启动：
-    由 scf_bootstrap 自动启动，端口固定为 9000
+启动命令：
+    uvicorn main:app --host 127.0.0.1 --port 8000 --workers 1
+
+部署：
+    python deploy.py   # 打包上传至 VPS 并重启 systemd 服务 wechat-ai
 """
 
 import asyncio

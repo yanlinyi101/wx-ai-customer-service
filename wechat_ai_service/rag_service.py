@@ -1,15 +1,27 @@
 """
 RAG（检索增强生成）模块
-- 从 knowledge_base.json 加载知识库
-- 根据用户问题检索最相关的条目
-- 将结果注入 AI 系统提示词，引导 AI 优先基于知识库回答
+
+功能：
+    从 knowledge_base.json 加载 Q&A 知识库，对用户问题进行关键词+字符重叠评分，
+    返回最相关的 top-K 条目供 AI 参考回答。
+
+评分策略（_score）：
+    1. 关键词命中：每命中一个 keywords 条目 +2 分（权重最高）
+    2. question 字段汉字字符重叠：每个共同汉字 +0.5 分
+
+retrieve() 返回值：
+    (context_str, image_urls, top_score)
+    - context_str : 注入提示词的参考文本
+    - image_urls  : 命中条目的图片链接列表（可为空）
+    - top_score   : 最高相关性分数，供 ai_service 意图路由使用
 
 知识库格式（knowledge_base.json）：
 [
   {
     "question": "如何申请退款？",
     "answer":   "支持7天无理由退款，请在订单页面点击申请退款...",
-    "keywords": ["退款", "退货", "退钱", "不想要", "七天"]
+    "keywords": ["退款", "退货", "退钱", "不想要", "七天"],
+    "image_url": ""
   },
   ...
 ]

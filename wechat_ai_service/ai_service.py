@@ -1,9 +1,19 @@
 """
 AI 服务模块
-- 调用 DeepSeek API（兼容 OpenAI 格式）
-- 维护每个用户的对话历史
-- RAG：检索知识库，将相关内容注入提示词
-- 支持更换 AI 提供商（改 BASE_URL + MODEL 即可）
+
+意图路由：
+    根据 RAG top_score 将用户消息分为三类，选择对应提示词：
+    - CHAT  (score < INTENT_LOW_THRESHOLD)  ：闲聊，LLM 亲和回复，不返回产品图片
+    - VAGUE (score < INTENT_HIGH_THRESHOLD) ：问题模糊，追问用户细节，不返回产品图片
+    - CLEAR (score ≥ INTENT_HIGH_THRESHOLD) ：明确产品问题，注入知识库上下文回答
+
+AI 提供商：
+    火山方舟 Ark（doubao-seed-2-0-lite-260215），兼容 OpenAI Chat Completions 格式。
+    通过 .env 中 AI_BASE_URL / AI_MODEL / AI_API_KEY 切换提供商，无需改代码。
+
+其他功能：
+    - 每用户独立对话历史（内存，重启清空），最多保留 MAX_HISTORY_TURNS 轮
+    - AI 调用失败自动重试一次；CLEAR 模式下重试失败时用知识库第一条答案兜底
 """
 
 import asyncio
