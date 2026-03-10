@@ -89,27 +89,30 @@ def _score(query: str, entry: dict) -> float:
 # 检索入口
 # ──────────────────────────────────────────
 
-def retrieve(query: str) -> tuple[str, list[str]]:
+def retrieve(query: str) -> tuple[str, list[str], float]:
     """
     根据用户问题检索知识库。
     返回：
       - context_text: 注入 AI 提示词的参考内容（str）
       - image_urls:   命中条目中的图片链接列表（list[str]），可为空
+      - top_score:    最高相关性分数（float），用于意图路由；无命中时为 0.0
     """
     kb = get_kb()
     if not kb:
-        return "", []
+        return "", [], 0.0
 
     scored = [
         (entry, _score(query, entry))
         for entry in kb
     ]
-    scored = [(e, s) for e, s in scored if s >= RAG_MIN_SCORE]
     scored.sort(key=lambda x: x[1], reverse=True)
 
+    top_score = scored[0][1] if scored else 0.0
+
+    scored = [(e, s) for e, s in scored if s >= RAG_MIN_SCORE]
     top = scored[:RAG_TOP_K]
     if not top:
-        return "", []
+        return "", [], top_score
 
     lines = []
     image_urls = []
@@ -121,4 +124,4 @@ def retrieve(query: str) -> tuple[str, list[str]]:
         if url and url not in image_urls:
             image_urls.append(url)
 
-    return "\n\n---\n\n".join(lines), image_urls
+    return "\n\n---\n\n".join(lines), image_urls, top_score

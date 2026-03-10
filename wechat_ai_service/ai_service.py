@@ -20,6 +20,11 @@ from config import (
     MAX_HISTORY_TURNS,
     HUMAN_TAKEOVER_KEYWORDS,
     RAG_ENABLED,
+    INTENT_LOW_THRESHOLD,
+    INTENT_HIGH_THRESHOLD,
+    CHAT_SYSTEM_PROMPT,
+    VAGUE_SYSTEM_PROMPT,
+    CLEAR_SYSTEM_PROMPT,
 )
 from rag_service import retrieve
 
@@ -53,6 +58,16 @@ def clear_history(openid: str) -> None:
 # 调用 AI 生成回复
 # ──────────────────────────────────────────
 
+def _classify_intent(top_score: float) -> str:
+    """根据 RAG top_score 判断用户意图类型"""
+    if top_score < INTENT_LOW_THRESHOLD:
+        return "CHAT"
+    elif top_score < INTENT_HIGH_THRESHOLD:
+        return "VAGUE"
+    else:
+        return "CLEAR"
+
+
 async def get_ai_reply(openid: str, user_message: str) -> tuple[str, list[str]]:
     """
     调用 AI 接口获取回复。
@@ -62,19 +77,26 @@ async def get_ai_reply(openid: str, user_message: str) -> tuple[str, list[str]]:
     """
     add_to_history(openid, "user", user_message)
 
-    # RAG：检索知识库
-    system = SYSTEM_PROMPT
+    # RAG：检索知识库并路由意图
     image_urls: list[str] = []
     context = ""
     if RAG_ENABLED:
-        context, image_urls = retrieve(user_message)
-        if context:
-            system += (
-                "\n\n【知识库参考信息】\n"
-                "以下是与用户问题相关的官方信息，请优先基于此回答，"
-                "不要与之矛盾，也不要编造额外内容：\n\n"
-                + context
-            )
+        context, image_urls, top_score = retrieve(user_message)
+        intent = _classify_intent(top_score)
+        logger.info(f"[Intent] top_score={top_score:.1f} → {intent}")
+
+        if intent == "CLEAR":
+            system = CLEAR_SYSTEM_PROMPT.format(context=context)
+        elif intent == "VAGUE":
+            system = VAGUE_SYSTEM_PROMPT
+            image_urls = []
+            context = ""  # 非CLEAR意图时清空context，防止兜底逻辑误用知识库
+        else:  # CHAT
+            system = CHAT_SYSTEM_PROMPT
+            image_urls = []
+            context = ""  # 非CLEAR意图时清空context，防止兜底逻辑误用知识库
+    else:
+        system = SYSTEM_PROMPT
 
     messages = [
         {"role": "system", "content": system},
@@ -96,7 +118,7 @@ async def get_ai_reply(openid: str, user_message: str) -> tuple[str, list[str]]:
     for attempt in range(2):
         try:
             async with httpx.AsyncClient(base_url=AI_BASE_URL, timeout=60) as client:
-                resp = await client.post("/v1/chat/completions", json=payload, headers=headers)
+                resp = await client.post("/chat/completions", json=payload, headers=headers)
                 resp.raise_for_status()
                 data = resp.json()
             reply = data["choices"][0]["message"]["content"].strip()
