@@ -4,7 +4,7 @@
 
 | 项目 | 值 |
 |------|-----|
-| IP | `118.25.104.84` |
+| IP | `YOUR_SERVER_IP` |
 | 用户 | `root` |
 | SSH 密钥 | `D:/小程序ai客服webhook/zm_pc1.pem` |
 | 代码目录 | `/opt/wechat-ai/` |
@@ -28,21 +28,21 @@ scp -i "D:/小程序ai客服webhook/zm_pc1.pem" -o StrictHostKeyChecking=no \
   "D:/小程序ai客服webhook/wechat_ai_service/rag_service.py" \
   "D:/小程序ai客服webhook/wechat_ai_service/knowledge_base.json" \
   "D:/小程序ai客服webhook/wechat_ai_service/admin.html" \
-  root@118.25.104.84:/opt/wechat-ai/
+  root@YOUR_SERVER_IP:/opt/wechat-ai/
 ```
 
 ### 第二步：重启服务
 
 ```bash
 ssh -i "D:/小程序ai客服webhook/zm_pc1.pem" -o StrictHostKeyChecking=no \
-  root@118.25.104.84 "systemctl restart wechat-ai"
+  root@YOUR_SERVER_IP "systemctl restart wechat-ai"
 ```
 
 ### 第三步：验证
 
 ```bash
 ssh -i "D:/小程序ai客服webhook/zm_pc1.pem" -o StrictHostKeyChecking=no \
-  root@118.25.104.84 "curl -s http://127.0.0.1:8000/health"
+  root@YOUR_SERVER_IP "curl -s http://127.0.0.1:8000/health"
 ```
 
 返回 `{"status":"ok"}` 即成功。
@@ -55,7 +55,7 @@ ssh -i "D:/小程序ai客服webhook/zm_pc1.pem" -o StrictHostKeyChecking=no \
 
 ```bash
 # SSH 连接
-ssh -i "D:/小程序ai客服webhook/zm_pc1.pem" root@118.25.104.84
+ssh -i "D:/小程序ai客服webhook/zm_pc1.pem" root@YOUR_SERVER_IP
 
 # 查看服务状态
 systemctl status wechat-ai
@@ -80,7 +80,7 @@ systemctl start wechat-ai
 
 ```bash
 ssh -i "D:/小程序ai客服webhook/zm_pc1.pem" -o StrictHostKeyChecking=no \
-  root@118.25.104.84 \
+  root@YOUR_SERVER_IP \
   "cd /opt/wechat-ai && venv/bin/pip install -r requirements.txt && systemctl restart wechat-ai"
 ```
 
@@ -111,7 +111,7 @@ ssh -i "D:/小程序ai客服webhook/zm_pc1.pem" -o StrictHostKeyChecking=no \
 
 ```bash
 # 在服务器上编辑
-ssh -i "D:/小程序ai客服webhook/zm_pc1.pem" root@118.25.104.84 "nano /opt/wechat-ai/.env"
+ssh -i "D:/小程序ai客服webhook/zm_pc1.pem" root@YOUR_SERVER_IP "nano /opt/wechat-ai/.env"
 ```
 
 关键变量参考 `wechat_ai_service/腾讯云部署说明.md` 第三章。

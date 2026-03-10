@@ -16,7 +16,7 @@ import tempfile
 
 # ── 配置 ──────────────────────────────────────────────────────
 SSH_KEY    = os.getenv("SSH_KEY",    r"D:\小程序ai客服webhook\zm_pc1.pem")
-SSH_HOST   = os.getenv("SSH_HOST",   "root@118.25.104.84")
+SSH_HOST   = os.getenv("SSH_HOST",   "root@YOUR_SERVER_IP")
 REMOTE_DIR = os.getenv("REMOTE_DIR", "/opt/wechat-ai")
 LOCAL_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "wechat_ai_service")
 SERVICE    = os.getenv("SERVICE",    "wechat-ai")

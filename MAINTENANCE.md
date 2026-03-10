@@ -25,7 +25,7 @@
 
 | 项目 | 值 |
 |------|----|
-| 服务器 IP | `118.25.104.84` |
+| 服务器 IP | `YOUR_SERVER_IP` |
 | 登录用户 | `root` |
 | SSH 密钥 | `D:/小程序ai客服webhook/zm_pc1.pem` |
 | 代码目录 | `/opt/wechat-ai/` |
@@ -37,7 +37,7 @@
 **SSH 快速连接：**
 
 ```bash
-ssh -i "D:/小程序ai客服webhook/zm_pc1.pem" root@118.25.104.84
+ssh -i "D:/小程序ai客服webhook/zm_pc1.pem" root@YOUR_SERVER_IP
 ```
 
 ---
@@ -59,21 +59,21 @@ scp -i "D:/小程序ai客服webhook/zm_pc1.pem" -o StrictHostKeyChecking=no \
   "D:/小程序ai客服webhook/wechat_ai_service/rag_service.py" \
   "D:/小程序ai客服webhook/wechat_ai_service/knowledge_base.json" \
   "D:/小程序ai客服webhook/wechat_ai_service/admin.html" \
-  root@118.25.104.84:/opt/wechat-ai/
+  root@YOUR_SERVER_IP:/opt/wechat-ai/
 ```
 
 ### 第二步：重启服务
 
 ```bash
 ssh -i "D:/小程序ai客服webhook/zm_pc1.pem" -o StrictHostKeyChecking=no \
-  root@118.25.104.84 "systemctl restart wechat-ai"
+  root@YOUR_SERVER_IP "systemctl restart wechat-ai"
 ```
 
 ### 第三步：验证
 
 ```bash
 ssh -i "D:/小程序ai客服webhook/zm_pc1.pem" -o StrictHostKeyChecking=no \
-  root@118.25.104.84 "curl -s http://127.0.0.1:8000/health"
+  root@YOUR_SERVER_IP "curl -s http://127.0.0.1:8000/health"
 ```
 
 返回 `{"status":"ok","service":"微信小程序AI客服"}` 即成功。
@@ -95,7 +95,7 @@ ssh -i "D:/小程序ai客服webhook/zm_pc1.pem" -o StrictHostKeyChecking=no \
 
 ```bash
 ssh -i "D:/小程序ai客服webhook/zm_pc1.pem" -o StrictHostKeyChecking=no \
-  root@118.25.104.84 \
+  root@YOUR_SERVER_IP \
   "cd /opt/wechat-ai && venv/bin/pip install -r requirements.txt && systemctl restart wechat-ai"
 ```
 
@@ -147,7 +147,7 @@ systemctl start wechat-ai
 
 ```bash
 # 在服务器上编辑
-ssh -i "D:/小程序ai客服webhook/zm_pc1.pem" root@118.25.104.84 "nano /opt/wechat-ai/.env"
+ssh -i "D:/小程序ai客服webhook/zm_pc1.pem" root@YOUR_SERVER_IP "nano /opt/wechat-ai/.env"
 ```
 
 修改后执行 `systemctl restart wechat-ai` 生效。
@@ -263,15 +263,15 @@ python kb_tool.py import              # 从 knowledge_base.xlsx 批量导入
 
 ```bash
 # 列出所有用户的记录文件
-ssh -i "D:/小程序ai客服webhook/zm_pc1.pem" root@118.25.104.84 \
+ssh -i "D:/小程序ai客服webhook/zm_pc1.pem" root@YOUR_SERVER_IP \
   "ls -lh /opt/wechat_chat_logs/"
 
 # 查看某个用户的完整记录（替换 openid）
-ssh -i "D:/小程序ai客服webhook/zm_pc1.pem" root@118.25.104.84 \
+ssh -i "D:/小程序ai客服webhook/zm_pc1.pem" root@YOUR_SERVER_IP \
   "cat /opt/wechat_chat_logs/{openid}.json | python3 -m json.tool"
 
 # 查看最近修改的记录（最活跃的用户）
-ssh -i "D:/小程序ai客服webhook/zm_pc1.pem" root@118.25.104.84 \
+ssh -i "D:/小程序ai客服webhook/zm_pc1.pem" root@YOUR_SERVER_IP \
   "ls -lt /opt/wechat_chat_logs/ | head -10"
 ```
 
