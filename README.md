@@ -6,9 +6,9 @@
 
 ## 功能特性
 
-- **AI 自动回复** — 接入 DeepSeek / OpenAI / Claude 等兼容 OpenAI 格式的模型，开箱即用
-- **意图路由** — 前置意图分类层，区分闲聊 / 模糊问题 / 明确问题，使用不同提示词策略回复（无额外 LLM 调用）
+- **意图路由** — 前置意图分类层，根据 RAG 评分区分闲聊 / 模糊问题 / 明确问题，使用不同提示词策略回复（零额外 LLM 调用）
 - **RAG 知识库检索** — 关键词 + 汉字重叠双重评分，优先从知识库提取答案注入提示词，支持图文回复
+- **AI 自动回复** — 接入火山方舟 Ark（doubao-seed-2-0-lite），兼容 OpenAI 格式，切换服务商只需改 `.env`
 - **多轮对话记忆** — 每个用户独立维护最近 5 轮对话历史
 - **一键转人工** — 检测关键词自动切换模式，通知管理员微信
 - **Web 管理后台** — 实时 WebSocket 推送 + HTTP 轮询双保险，展示完整 AI + 人工聊天记录
@@ -27,12 +27,12 @@
   │  POST /webhook（AES 加密 XML）
   ▼
 云服务器 FastAPI（uvicorn + nginx）
-  ├─ crypto.py       解密 & 验签
-  ├─ rag_service.py  检索知识库，提取相关 Q&A
-  ├─ ai_service.py   拼装提示词，调用 AI API
+  ├─ crypto.py        解密 & 验签
+  ├─ rag_service.py   检索知识库，返回 (context, images, top_score)
+  ├─ ai_service.py    意图路由 → 选择提示词 → 调用 AI API
   ├─ human_service.py 人工模式状态管理（内存）
-  ├─ chat_logger.py  全量对话写入本地 JSON 文件
-  └─ wechat_api.py   调用微信客服消息 API 发送回复
+  ├─ chat_logger.py   全量对话写入本地 JSON 文件
+  └─ wechat_api.py    调用微信客服消息 API 发送回复
 
 管理员
   │  打开 admin.html
@@ -49,13 +49,13 @@ REST API /admin/*   ──── 回复、结束会话、查历史
 wx-ai-customer-service/
 ├── wechat_ai_service/
 │   ├── main.py              FastAPI 入口，Webhook 路由 + 管理 API + WebSocket
-│   ├── ai_service.py        AI 调用、对话历史管理
+│   ├── config.py            所有配置项（从 .env 读取）+ 意图路由阈值 + 三套提示词
+│   ├── ai_service.py        意图路由、AI 调用、对话历史管理
+│   ├── rag_service.py       知识库加载与检索，返回 top_score 供路由判断
 │   ├── human_service.py     人工客服模式状态管理（内存）
 │   ├── chat_logger.py       聊天记录持久化（本地 JSON 文件）
-│   ├── rag_service.py       知识库加载与检索
 │   ├── wechat_api.py        微信 API（发消息、上传素材、access_token）
 │   ├── crypto.py            微信消息加解密（安全模式）
-│   ├── config.py            所有配置项（从 .env 环境变量读取）
 │   ├── kb_tool.py           知识库管理命令行工具
 │   ├── admin.html           客服管理后台（单文件，直接浏览器打开）
 │   └── requirements.txt     Python 依赖
@@ -63,7 +63,8 @@ wx-ai-customer-service/
 │   ├── nginx.conf           Nginx 反向代理配置（含 WebSocket 支持）
 │   ├── wechat-ai.service    systemd 服务配置
 │   └── setup.sh             服务器一键初始化脚本
-├── DEPLOY.md                服务器信息 & 快速部署命令
+├── deploy.py                一键部署脚本（打包 → scp → 服务器重启）
+├── DEPLOY.md                服务器信息 & 快速部署命令参考
 └── MAINTENANCE.md           完整运维手册
 ```
 
@@ -75,7 +76,7 @@ wx-ai-customer-service/
 
 - 一台公网 Linux 服务器（Ubuntu 20.04+），已备案域名或直接用 IP
 - 微信小程序已开通客服消息功能
-- DeepSeek / OpenAI 等 AI 服务 API Key
+- 火山方舟 Ark API Key（或其他兼容 OpenAI 格式的服务商）
 
 ### 1. 克隆仓库
 
@@ -87,9 +88,6 @@ cd wx-ai-customer-service
 ### 2. 服务器初始化（首次部署）
 
 ```bash
-# 编辑脚本，填入你的域名和邮箱
-nano deploy/setup.sh
-
 # 上传代码到服务器
 scp -r wechat_ai_service/* root@YOUR_SERVER_IP:/opt/wechat-ai/
 
@@ -108,10 +106,10 @@ WECHAT_APP_ID=小程序AppID
 WECHAT_APP_SECRET=小程序AppSecret
 WECHAT_ENCODING_AES_KEY=43位随机字符串
 
-# AI 服务
-AI_API_KEY=your_deepseek_api_key
-AI_BASE_URL=https://api.deepseek.com
-AI_MODEL=deepseek-chat
+# AI 服务（火山方舟 Ark，兼容 OpenAI 格式）
+AI_API_KEY=your_ark_api_key
+AI_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
+AI_MODEL=doubao-seed-2-0-lite-260215
 
 # 管理后台
 ADMIN_TOKEN=自定义访问令牌（建议32位随机字符串）
@@ -134,9 +132,29 @@ curl http://127.0.0.1:8000/health  # 返回 {"status":"ok"} 即成功
 - 加密方式：安全模式
 - 消息加密密钥：与 `WECHAT_ENCODING_AES_KEY` 一致
 
-### 6. 打开管理后台
+### 6. 后续部署（代码更新）
+
+```bash
+python deploy.py   # 本地一键打包上传并重启服务
+```
+
+### 7. 打开管理后台
 
 用浏览器直接打开本地文件 `wechat_ai_service/admin.html`，填入服务器地址和 `ADMIN_TOKEN` 登录即可。
+
+---
+
+## 意图路由
+
+消息进入后，系统先用 RAG 检索知识库得到最高匹配分 `top_score`，再根据阈值路由到三种处理策略，**无需额外 LLM 调用**。
+
+| top_score 范围 | 意图 | 策略 | 图片 |
+|---|---|---|---|
+| < 2.0 | 闲聊（如"在吗"） | 亲和客服语气直接回复 | 不返回 |
+| 2.0 ~ 3.9 | 模糊问题（如"我想买东西"） | 追问 1-2 个关键细节 | 不返回 |
+| ≥ 4.0 | 明确产品问题 | 注入知识库内容回答 | 正常返回 |
+
+阈值通过环境变量 `INTENT_LOW_THRESHOLD`（默认 2.0）/ `INTENT_HIGH_THRESHOLD`（默认 4.0）调整，无需改代码。
 
 ---
 
@@ -152,22 +170,6 @@ curl http://127.0.0.1:8000/health  # 返回 {"status":"ok"} 即成功
 ---
 
 ## 知识库编辑
-
-### 文件说明
-
-| 文件 | 说明 |
-|------|------|
-| `knowledge_base_example.json` | **示例文件**，已提交至 Git，供参考格式使用 |
-| `knowledge_base.json` | **业务数据文件**，含真实业务内容，已加入 `.gitignore` 不上传 |
-
-### 首次初始化
-
-```bash
-cd wechat_ai_service
-
-# 以示例文件为模板，创建自己的知识库
-cp knowledge_base_example.json knowledge_base.json
-```
 
 ### 条目格式
 
@@ -198,30 +200,17 @@ python kb_tool.py export          # 导出为 Excel
 python kb_tool.py import          # 从 Excel 批量导入
 ```
 
-### 更新知识库后部署
-
-```bash
-# 上传到服务器
-scp -i "zm_pc1.pem" wechat_ai_service/knowledge_base.json \
-  root@SERVER_IP:/opt/wechat-ai/
-
-# 重启服务（知识库在启动时加载）
-ssh -i "zm_pc1.pem" root@SERVER_IP "systemctl restart wechat-ai"
-```
-
 ---
 
-## 意图路由
+## 切换 AI 服务商
 
-消息进入后，系统先用 RAG 检索知识库得到最高匹配分 `top_score`，再根据阈值路由到三种处理策略，无需额外 LLM 调用。
+修改服务器 `.env`，重启服务即可：
 
-| top_score 范围 | 意图 | 策略 | 图片 |
-|---|---|---|---|
-| < 1.0 | 闲聊（如"在吗"） | 亲和客服语气直接回复 | 不返回 |
-| 1.0 ~ 3.9 | 模糊问题（如"我想买东西"） | 追问 1-2 个关键细节 | 不返回 |
-| ≥ 4.0 | 明确产品问题 | 注入知识库内容回答 | 正常返回 |
-
-阈值在 `config.py` 中通过环境变量 `INTENT_LOW_THRESHOLD` / `INTENT_HIGH_THRESHOLD` 可调整，无需改代码。
+| 服务商 | `AI_BASE_URL` | `AI_MODEL` |
+|--------|--------------|------------|
+| 火山方舟（当前） | `https://ark.cn-beijing.volces.com/api/v3` | `doubao-seed-2-0-lite-260215` |
+| DeepSeek | `https://api.deepseek.com` | `deepseek-chat` |
+| OpenAI | `https://api.openai.com/v1` | `gpt-4o-mini` |
 
 ---
 
@@ -234,20 +223,8 @@ ssh -i "zm_pc1.pem" root@SERVER_IP "systemctl restart wechat-ai"
 | HTTP 客户端 | httpx（异步） |
 | 消息加解密 | pycryptodome（AES-256-CBC） |
 | 部署 | 云服务器 + systemd + Nginx |
-| AI 接口 | OpenAI 兼容格式（默认 DeepSeek） |
+| AI 接口 | 火山方舟 Ark（doubao-seed-2-0-lite，兼容 OpenAI 格式） |
 | 聊天记录 | 本地 JSON 文件（`/opt/wechat_chat_logs/`） |
-
----
-
-## 切换 AI 服务商
-
-修改服务器 `.env`，重启服务即可：
-
-| 服务商 | `AI_BASE_URL` | `AI_MODEL` |
-|--------|--------------|------------|
-| DeepSeek（推荐） | `https://api.deepseek.com` | `deepseek-chat` |
-| OpenAI | `https://api.openai.com/v1` | `gpt-4o-mini` |
-| Claude | `https://api.anthropic.com/v1` | `claude-haiku-4-5-20251001` |
 
 ---
 
