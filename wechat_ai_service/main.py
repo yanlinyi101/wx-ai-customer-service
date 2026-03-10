@@ -40,6 +40,7 @@ from human_service import (
     push_message,
     get_all_sessions,
     save_pre_history,
+    get_idle_openids,
 )
 from wechat_api import (
     download_user_image,
@@ -59,6 +60,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="微信小程序 AI 客服", version="1.0.0")
+
+# 5分钟无交互自动结束人工会话
+_IDLE_TIMEOUT_SECONDS = 5 * 60
 
 # 允许 COS 静态网站域名跨域调用 JSON API
 app.add_middleware(
@@ -87,6 +91,33 @@ crypto = WeChatCrypto(
     encoding_aes_key=WECHAT_ENCODING_AES_KEY,
     app_id=WECHAT_APP_ID,
 )
+
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(_auto_close_idle_sessions())
+
+
+async def _auto_close_idle_sessions() -> None:
+    """后台任务：5分钟无交互自动结束人工接管会话"""
+    while True:
+        await asyncio.sleep(60)  # 每60秒检查一次
+        try:
+            idle_oids = get_idle_openids(_IDLE_TIMEOUT_SECONDS)
+            for openid in idle_oids:
+                logger.info(f"[超时关闭] 5分钟无交互，自动结束 openid={openid[:8]}")
+                await exit_human_mode(openid)
+                await send_text_message(
+                    openid,
+                    "您已超过5分钟未发送消息，客服已自动离线。如需继续咨询请重新发送消息 😊",
+                )
+                session_id = _human_sessions.pop(openid, None)
+                if session_id:
+                    await end_chat_session(openid, session_id)
+            if idle_oids:
+                await _broadcast_sessions()
+        except Exception as e:
+            logger.error(f"[超时关闭] 检查异常: {e}")
 
 
 # ──────────────────────────────────────────
@@ -401,6 +432,7 @@ async def admin_close(request: Request, token: str = Query("")):
     session_id = _human_sessions.pop(openid, None)
     if session_id:
         await end_chat_session(openid, session_id)
+    await _broadcast_sessions()  # 立即推送最新会话列表，避免已关闭会话在前端复现
     return {"ok": True}
 
 

@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 _human_mode: set[str] = set()
 _human_queue: dict[str, list] = defaultdict(list)
 _pre_history: dict[str, list] = {}   # openid -> [{text, role}, ...]
+_last_activity: dict[str, float] = {}  # openid -> 最后活跃时间戳
 _MAX_QUEUE = 100
 
 
@@ -36,6 +37,7 @@ async def is_human_mode(openid: str) -> bool:
 async def enter_human_mode(openid: str) -> None:
     """将用户切换到人工客服模式"""
     _human_mode.add(openid)
+    _last_activity[openid] = time.time()
     logger.debug(f"[human_service] 进入人工模式 openid={openid[:8]}")
 
 
@@ -44,6 +46,7 @@ async def exit_human_mode(openid: str) -> None:
     _human_mode.discard(openid)
     _human_queue.pop(openid, None)
     _pre_history.pop(openid, None)
+    _last_activity.pop(openid, None)
     logger.debug(f"[human_service] 退出人工模式 openid={openid[:8]}")
 
 
@@ -62,6 +65,16 @@ async def push_message(
     if image_url:
         entry["image_url"] = image_url
     queue.append(entry)
+    _last_activity[openid] = time.time()  # 更新最后活跃时间
+
+
+def get_idle_openids(timeout_seconds: float) -> list[str]:
+    """返回超过 timeout_seconds 未活跃的 openid 列表"""
+    now = time.time()
+    return [
+        oid for oid in _human_mode
+        if now - _last_activity.get(oid, now) >= timeout_seconds
+    ]
 
 
 def save_pre_history(openid: str, ai_history: list) -> None:
