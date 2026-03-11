@@ -26,6 +26,12 @@ _pre_history: dict[str, list] = {}   # openid -> [{text, role}, ...]
 _last_activity: dict[str, float] = {}  # openid -> 最后活跃时间戳
 _MAX_QUEUE = 100
 
+# ─── 会话归属追踪 ────────────────────────────────────────────────────────────
+_session_agent: dict[str, str] = {}    # openid → agent_name（首个回复者）
+_enter_human_ts: dict[str, float] = {} # openid → 进入人工模式时间戳
+_first_replied: set[str] = set()       # 已被首次回复的 openid 集合
+_response_time: dict[str, float] = {}  # openid → 首次应答时长（秒）
+
 
 # ─── 公共 API ──────────────────────────────────────────────────────────────────
 
@@ -38,6 +44,7 @@ async def enter_human_mode(openid: str) -> None:
     """将用户切换到人工客服模式"""
     _human_mode.add(openid)
     _last_activity[openid] = time.time()
+    _enter_human_ts[openid] = time.time()
     logger.debug(f"[human_service] 进入人工模式 openid={openid[:8]}")
 
 
@@ -47,6 +54,7 @@ async def exit_human_mode(openid: str) -> None:
     _human_queue.pop(openid, None)
     _pre_history.pop(openid, None)
     _last_activity.pop(openid, None)
+    clear_session_tracking(openid)
     logger.debug(f"[human_service] 退出人工模式 openid={openid[:8]}")
 
 
@@ -77,6 +85,16 @@ def get_idle_openids(timeout_seconds: float) -> list[str]:
     ]
 
 
+def get_unattended_openids(timeout_seconds: float) -> list[str]:
+    """返回超过 timeout_seconds 无客服接入（未收到任何客服回复）的 openid 列表"""
+    now = time.time()
+    return [
+        oid for oid in _human_mode
+        if oid not in _first_replied
+        and now - _enter_human_ts.get(oid, now) >= timeout_seconds
+    ]
+
+
 def save_pre_history(openid: str, ai_history: list) -> None:
     """将 AI 对话历史转换为 pre_history 格式保存"""
     _pre_history[openid] = [
@@ -97,3 +115,42 @@ async def get_all_sessions() -> dict[str, dict]:
         }
         for oid in _human_mode
     }
+
+
+# ─── 会话归属追踪 API ─────────────────────────────────────────────────────────
+
+def attribute_session(openid: str, agent_name: str) -> float | None:
+    """
+    记录会话归属到 agent_name（首个回复者获得归属）。
+    返回首次应答时长（秒），若已有归属则返回 None。
+    """
+    if openid not in _first_replied:
+        _first_replied.add(openid)
+        _session_agent[openid] = agent_name
+        enter_ts = _enter_human_ts.get(openid)
+        if enter_ts:
+            rt = time.time() - enter_ts
+            _response_time[openid] = rt
+            return rt
+    return None
+
+
+def get_session_attribution(openid: str) -> dict:
+    """获取会话归属信息（agent_name 和已记录的应答时长）"""
+    return {
+        "agent_name": _session_agent.get(openid),
+        "response_time": _response_time.get(openid),
+    }
+
+
+def get_session_queue(openid: str) -> list:
+    """获取会话的消息队列（同步）"""
+    return list(_human_queue.get(openid, []))
+
+
+def clear_session_tracking(openid: str) -> None:
+    """清理会话归属追踪数据"""
+    _session_agent.pop(openid, None)
+    _enter_human_ts.pop(openid, None)
+    _first_replied.discard(openid)
+    _response_time.pop(openid, None)

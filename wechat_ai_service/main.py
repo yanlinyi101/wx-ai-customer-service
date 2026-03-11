@@ -26,6 +26,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 
 from ai_service import get_ai_reply, needs_human, clear_history, get_history
 from chat_logger import append_log, end_session as end_chat_session, get_user_log, list_all_users, update_nickname
+import stats_service
 from config import (
     WECHAT_ENCODING_AES_KEY,
     WECHAT_TOKEN,
@@ -35,6 +36,9 @@ from config import (
     ADMIN_OPENID,
     IMAGE_DIR,
     IMAGE_BASE_URL,
+    LOG_DIR,
+    load_agents,
+    save_agents,
 )
 from crypto import WeChatCrypto
 from human_service import (
@@ -45,6 +49,10 @@ from human_service import (
     get_all_sessions,
     save_pre_history,
     get_idle_openids,
+    get_unattended_openids,
+    attribute_session,
+    get_session_attribution,
+    get_session_queue,
 )
 from wechat_api import (
     download_user_image,
@@ -68,12 +76,13 @@ app = FastAPI(title="微信小程序 AI 客服", version="1.0.0")
 
 # 5分钟无交互自动结束人工会话
 _IDLE_TIMEOUT_SECONDS = 5 * 60
+_UNATTENDED_TIMEOUT_SECONDS = 3 * 60  # 3分钟无客服接入自动转回AI
 
 # 允许 COS 静态网站域名跨域调用 JSON API
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["Content-Type"],
 )
 
@@ -90,6 +99,8 @@ _ws_queues: dict[WebSocket, asyncio.Queue] = {}
 _ai_sessions: dict[str, str] = {}
 # 人工会话 session_id 追踪（openid -> session_id）
 _human_sessions: dict[str, str] = {}
+# 账号 CRUD 操作锁
+_agents_lock = asyncio.Lock()
 
 crypto = WeChatCrypto(
     token=WECHAT_TOKEN,
@@ -104,13 +115,51 @@ async def startup_event():
 
 
 async def _auto_close_idle_sessions() -> None:
-    """后台任务：5分钟无交互自动结束人工接管会话"""
+    """后台任务：定期检查空闲/无人接入会话"""
     while True:
         await asyncio.sleep(60)  # 每60秒检查一次
         try:
+            unattended_oids = get_unattended_openids(_UNATTENDED_TIMEOUT_SECONDS)
             idle_oids = get_idle_openids(_IDLE_TIMEOUT_SECONDS)
+            processed = set()
+            changed = False
+
+            # 优先处理：3分钟无客服接入，转回AI
+            for openid in unattended_oids:
+                processed.add(openid)
+                logger.info(f"[无人接入] 3分钟无客服接入，转回AI openid={openid[:8]}")
+                messages = get_session_queue(openid)
+                user_msgs = sum(1 for m in messages if m.get("role") == "user")
+                asyncio.create_task(asyncio.to_thread(
+                    stats_service.record_session_close,
+                    "", openid, user_msgs, 0, None,
+                ))
+                await exit_human_mode(openid)
+                await send_text_message(
+                    openid,
+                    "抱歉，当前客服繁忙暂时无法接入，已为您转回智能助手处理。\n"
+                    "如需人工客服，请再次发送\"人工\"。",
+                )
+                session_id = _human_sessions.pop(openid, None)
+                if session_id:
+                    await end_chat_session(openid, session_id)
+                changed = True
+
+            # 其次处理：5分钟无交互（已有接入但用户停止发消息）
             for openid in idle_oids:
+                if openid in processed:
+                    continue
                 logger.info(f"[超时关闭] 5分钟无交互，自动结束 openid={openid[:8]}")
+                messages = get_session_queue(openid)
+                user_msgs = sum(1 for m in messages if m.get("role") == "user")
+                agent_msgs_count = sum(1 for m in messages if m.get("role") == "agent")
+                attribution = get_session_attribution(openid)
+                asyncio.create_task(asyncio.to_thread(
+                    stats_service.record_session_close,
+                    attribution.get("agent_name") or "",
+                    openid, user_msgs, agent_msgs_count,
+                    attribution.get("response_time"),
+                ))
                 await exit_human_mode(openid)
                 await send_text_message(
                     openid,
@@ -119,10 +168,12 @@ async def _auto_close_idle_sessions() -> None:
                 session_id = _human_sessions.pop(openid, None)
                 if session_id:
                     await end_chat_session(openid, session_id)
-            if idle_oids:
+                changed = True
+
+            if changed:
                 await _broadcast_sessions()
         except Exception as e:
-            logger.error(f"[超时关闭] 检查异常: {e}")
+            logger.error(f"[自动关闭] 检查异常: {e}")
 
 
 # ──────────────────────────────────────────
@@ -132,6 +183,21 @@ async def _auto_close_idle_sessions() -> None:
 def _check_admin(token: str) -> bool:
     """验证管理令牌（非空且匹配）"""
     return bool(ADMIN_TOKEN) and token == ADMIN_TOKEN
+
+
+@app.post("/admin/login")
+async def admin_login(request: Request):
+    """客服账号登录，返回 agent_name 和 token"""
+    body = await request.json()
+    username = body.get("username", "").strip()
+    password = body.get("password", "")
+    if not username or not password:
+        return JSONResponse({"ok": False, "error": "用户名和密码不能为空"}, status_code=400)
+    agents = load_agents()
+    for agent in agents:
+        if agent.get("username") == username and agent.get("password") == password:
+            return {"ok": True, "agent_name": username, "token": ADMIN_TOKEN}
+    return JSONResponse({"ok": False, "error": "用户名或密码错误"}, status_code=401)
 
 
 @app.websocket("/ws/admin")
@@ -426,13 +492,16 @@ async def admin_reply(request: Request, token: str = Query("")):
     body = await request.json()
     openid = body.get("openid", "").strip()
     message = body.get("message", "").strip()
+    agent_name = body.get("agent_name", "").strip()
     if not openid or not message:
         return JSONResponse({"ok": False, "error": "openid 和 message 不能为空"}, status_code=400)
     success = await send_text_message(openid, message)
     if success:
-        logger.info(f"[人工回复] openid={openid[:8]}...")
+        logger.info(f"[人工回复] openid={openid[:8]}... agent={agent_name or '未知'}")
+        # 记录会话归属（首个回复者获得归属）
+        attribute_session(openid, agent_name)
         session_id = _human_sessions.get(openid, f"human_{int(time.time())}")
-        await append_log(openid, "agent", message, time.time(), session_id)
+        await append_log(openid, "agent", message, time.time(), session_id, agent_name=agent_name)
         await push_message(openid, message, role="agent")
         await _broadcast_sessions()
         return {"ok": True}
@@ -447,11 +516,28 @@ async def admin_close(request: Request, token: str = Query("")):
         return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
     body = await request.json()
     openid = body.get("openid", "").strip()
+    agent_name = body.get("agent_name", "").strip()
     if not openid:
         return JSONResponse({"ok": False, "error": "openid 不能为空"}, status_code=400)
+
+    # 关闭前收集统计数据
+    messages = get_session_queue(openid)
+    user_msgs = sum(1 for m in messages if m.get("role") == "user")
+    agent_msgs_count = sum(1 for m in messages if m.get("role") == "agent")
+    attribution = get_session_attribution(openid)
+    final_agent_name = attribution.get("agent_name") or agent_name
+    response_time = attribution.get("response_time")
+
     await exit_human_mode(openid)
     await send_text_message(openid, "感谢您的耐心等候，如有其他问题随时告诉我 😊")
-    logger.info(f"[关闭会话] openid={openid[:8]}... 恢复 AI 模式")
+    logger.info(f"[关闭会话] openid={openid[:8]}... 恢复 AI 模式 agent={final_agent_name or '未知'}")
+
+    # 写入统计（异步线程，不阻塞响应）
+    asyncio.create_task(asyncio.to_thread(
+        stats_service.record_session_close,
+        final_agent_name, openid, user_msgs, agent_msgs_count, response_time,
+    ))
+
     # 结束人工会话日志
     session_id = _human_sessions.pop(openid, None)
     if session_id:
@@ -465,6 +551,7 @@ async def admin_reply_image(
     token: str = Query(""),
     openid: str = Form(...),
     image: UploadFile = File(...),
+    agent_name: str = Form(""),
 ):
     """客服发送图片消息（multipart/form-data）"""
     if not _check_admin(token):
@@ -506,12 +593,14 @@ async def admin_reply_image(
 
     session_id = _human_sessions.get(openid, f"human_{int(time.time())}")
     ts_now = time.time()
+    # 记录会话归属（首个图片回复也算接入）
+    attribute_session(openid, agent_name)
     await append_log(openid, "agent", "", ts_now, session_id,
-                     image_url=accessible_url, msg_type="image")
+                     image_url=accessible_url, msg_type="image", agent_name=agent_name)
     await push_message(openid, text="", role="agent",
                        image_url=accessible_url, msg_type="image")
     await _broadcast_sessions()
-    logger.info(f"[admin_reply_image] 发送成功 openid={openid[:8]}...")
+    logger.info(f"[admin_reply_image] 发送成功 openid={openid[:8]}... agent={agent_name or '未知'}")
     return {"ok": True}
 
 
@@ -555,6 +644,121 @@ async def admin_history(openid: str, token: str = Query("")):
         "nickname": log.get("nickname", ""),
         "sessions": log.get("sessions", []),
     }
+
+
+@app.get("/admin/stats")
+async def admin_stats(token: str = Query("")):
+    """返回整体和客服维度的统计数据"""
+    if not _check_admin(token):
+        return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+    try:
+        data = await asyncio.to_thread(stats_service.get_stats)
+        return {"ok": True, **data}
+    except Exception as e:
+        logger.error(f"[admin_stats] 获取统计失败: {e}")
+        return JSONResponse({"ok": False, "error": "获取统计失败"}, status_code=500)
+
+
+@app.post("/admin/rebuild_stats")
+async def admin_rebuild_stats(token: str = Query("")):
+    """重建统计数据（扫描全量日志，管理员触发）"""
+    if not _check_admin(token):
+        return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+    try:
+        await asyncio.to_thread(stats_service.rebuild_from_logs, LOG_DIR)
+        return {"ok": True, "message": "统计数据重建完成"}
+    except Exception as e:
+        logger.error(f"[admin_rebuild_stats] 重建失败: {e}")
+        return JSONResponse({"ok": False, "error": "重建失败"}, status_code=500)
+
+
+@app.get("/admin/agents")
+async def admin_list_agents(token: str = Query("")):
+    """返回客服账号列表（不含密码）及其统计数据"""
+    if not _check_admin(token):
+        return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+    agents = load_agents()
+    stats = await asyncio.to_thread(stats_service.get_stats)
+    agent_stats = stats.get("agents", {})
+    result = []
+    for a in agents:
+        name = a.get("username", "")
+        s = agent_stats.get(name, {})
+        result.append({
+            "username": name,
+            "is_admin": a.get("is_admin", False),
+            "sessions": s.get("sessions", 0),
+            "unique_users": s.get("unique_users", 0),
+            "avg_response_time": s.get("avg_response_time"),
+        })
+    return {"ok": True, "agents": result}
+
+
+@app.post("/admin/agents")
+async def admin_add_agent(request: Request, token: str = Query("")):
+    """新增客服账号"""
+    if not _check_admin(token):
+        return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+    body = await request.json()
+    username = body.get("username", "").strip()
+    password = body.get("password", "").strip()
+    is_admin = bool(body.get("is_admin", False))
+    if not username or not password:
+        return JSONResponse({"ok": False, "error": "用户名和密码不能为空"}, status_code=400)
+    async with _agents_lock:
+        agents = await asyncio.to_thread(load_agents)
+        if any(a.get("username") == username for a in agents):
+            return JSONResponse({"ok": False, "error": "用户名已存在"}, status_code=400)
+        new_agents = agents + [{"username": username, "password": password, "is_admin": is_admin}]
+        await asyncio.to_thread(save_agents, new_agents)
+    return {"ok": True}
+
+
+@app.put("/admin/agents/{username}")
+async def admin_update_agent(username: str, request: Request, token: str = Query("")):
+    """修改客服账号密码或管理员状态"""
+    if not _check_admin(token):
+        return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+    body = await request.json()
+    new_password = body.get("password", "").strip()
+    new_is_admin = body.get("is_admin")  # None means don't change
+    if not new_password and new_is_admin is None:
+        return JSONResponse({"ok": False, "error": "没有要修改的内容"}, status_code=400)
+    async with _agents_lock:
+        agents = await asyncio.to_thread(load_agents)
+        new_agents = []
+        found = False
+        for a in agents:
+            if a.get("username") == username:
+                found = True
+                updated = {**a}
+                if new_password:
+                    updated["password"] = new_password
+                if new_is_admin is not None:
+                    updated["is_admin"] = bool(new_is_admin)
+                new_agents.append(updated)
+            else:
+                new_agents.append(a)
+        if not found:
+            return JSONResponse({"ok": False, "error": "账号不存在"}, status_code=404)
+        await asyncio.to_thread(save_agents, new_agents)
+    return {"ok": True}
+
+
+@app.delete("/admin/agents/{username}")
+async def admin_delete_agent(username: str, token: str = Query("")):
+    """删除客服账号"""
+    if not _check_admin(token):
+        return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+    async with _agents_lock:
+        agents = await asyncio.to_thread(load_agents)
+        if len(agents) <= 1:
+            return JSONResponse({"ok": False, "error": "至少保留一个账号"}, status_code=400)
+        new_agents = [a for a in agents if a.get("username") != username]
+        if len(new_agents) == len(agents):
+            return JSONResponse({"ok": False, "error": "账号不存在"}, status_code=404)
+        await asyncio.to_thread(save_agents, new_agents)
+    return {"ok": True}
 
 
 # ──────────────────────────────────────────
@@ -678,8 +882,8 @@ async def _handle_text(openid: str, text: str) -> None:
     else:
         logger.error(f"[文字回复失败] openid={openid[:8]}...")
 
-    # 2. 逐张发送图片（最多2张，避免超出消息条数限制）
-    for url in image_urls[:2]:
+    # 2. 逐张发送图片（最多5张，支持多图知识库条目）
+    for url in image_urls[:5]:
         try:
             media_id = await get_or_upload_media(url)
             if media_id:

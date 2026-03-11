@@ -7,7 +7,7 @@ RAG（检索增强生成）模块
 
 评分策略（_score）：
     1. 关键词命中：每命中一个 keywords 条目 +2 分（权重最高）
-    2. question 字段汉字字符重叠：每个共同汉字 +0.5 分
+    2. question 字段 CJK bi-gram 重叠：每个共同双字 +0.8 分（避免共享前缀导致同分）
 
 retrieve() 返回值：
     (context_str, image_urls, top_score)
@@ -74,12 +74,22 @@ def reload_kb() -> None:
 # 相关性评分（关键词匹配 + 汉字字符重叠）
 # ──────────────────────────────────────────
 
+def _cjk_bigrams(text: str) -> set:
+    """提取文本中连续两个汉字组成的 bi-gram 集合"""
+    return {
+        text[i:i+2]
+        for i in range(len(text) - 1)
+        if all("\u4e00" <= c <= "\u9fff" for c in text[i:i+2])
+    }
+
+
 def _score(query: str, entry: dict) -> float:
     """
     计算用户问题与知识库条目的相关性分数。
     策略：
     1. 关键词命中：用户问题包含关键词，每命中一个 +2 分
-    2. 问题字符重叠：与 question 字段共享的汉字数量，每个 +0.5 分
+    2. question 字段 CJK bi-gram 重叠：每个共同 2-gram +0.8 分
+       （比单字符重叠更能区分语义，避免共享前缀的条目得分相同）
     """
     score = 0.0
 
@@ -88,11 +98,11 @@ def _score(query: str, entry: dict) -> float:
         if kw and kw in query:
             score += 2.0
 
-    # 2. question 字段汉字字符重叠
+    # 2. question 字段 CJK bi-gram 重叠
     question = entry.get("question", "")
-    for char in query:
-        if "\u4e00" <= char <= "\u9fff" and char in question:
-            score += 0.5
+    query_bigrams = _cjk_bigrams(query)
+    q_bigrams = _cjk_bigrams(question)
+    score += len(query_bigrams & q_bigrams) * 0.8
 
     return score
 
@@ -130,13 +140,16 @@ def retrieve(query: str) -> tuple[str, list[str], float]:
     image_urls = []
     for entry, score in top:
         lines.append(f"问：{entry['question']}\n答：{entry['answer']}")
-        logger.debug(f"[RAG] 命中 score={score:.1f} | {entry['question'][:20]}")
+        logger.info(f"[RAG] 命中 score={score:.1f} | {entry['question'][:20]}")
 
-    # 只取 top-1 条目的图片（最相关条目）
-    # 不从所有 top-K 条目收集图片，避免发送无关图片
+    # 只取 top-1 条目的图片（最相关条目），支持多图
+    # image_urls 字段（列表）优先；兼容旧 image_url（字符串）
     top_entry = top[0][0]
-    url = top_entry.get("image_url", "").strip()
-    if url:
-        image_urls.append(url)
+    urls = top_entry.get("image_urls") or []
+    if not urls:
+        single = top_entry.get("image_url", "").strip()
+        if single:
+            urls = [single]
+    image_urls.extend(urls)
 
     return "\n\n---\n\n".join(lines), image_urls, top_score

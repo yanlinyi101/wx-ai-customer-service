@@ -841,8 +841,13 @@ body {
       <input id="login-scf" type="text" placeholder="https://your-server.com" />
     </div>
     <div class="field">
-      <label class="field-label" for="login-token">访问令牌</label>
-      <input id="login-token" type="password" placeholder="ADMIN_TOKEN" />
+      <label class="field-label" for="login-username">用户名</label>
+      <input id="login-username" type="text" placeholder="客服1" autocomplete="username" />
+    </div>
+    <div class="field">
+      <label class="field-label" for="login-password">密码</label>
+      <input id="login-password" type="password" placeholder="••••••" autocomplete="current-password"
+             onkeydown="if(event.key==='Enter')doLogin()" />
     </div>
     <button id="login-btn" onclick="doLogin()">登 录</button>
     <div id="login-err"></div>
@@ -858,6 +863,25 @@ body {
   <button id="save-config" onclick="saveConfig()">保存</button>
   <span id="status-dot"></span>
   <span id="status-text">未连接</span>
+  <span style="flex:1"></span>
+  <span id="agent-name-display" style="font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text-2);margin-right:8px;"></span>
+  <button onclick="toggleStats()" style="font-size:12px;padding:4px 12px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text-2);cursor:pointer;margin-right:6px;">统计</button>
+  <button onclick="toggleAccounts()" style="font-size:12px;padding:4px 12px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text-2);cursor:pointer;margin-right:6px;">账号</button>
+  <div style="position:relative;display:inline-block;margin-right:6px;">
+    <button onclick="toggleSettings()" id="settings-btn" style="font-size:12px;padding:4px 12px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text-2);cursor:pointer;">设置</button>
+    <div id="settings-popup" style="display:none;position:absolute;right:0;top:calc(100% + 6px);background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--r-md);padding:14px 16px;min-width:220px;z-index:999;box-shadow:0 4px 16px rgba(0,0,0,0.18);">
+      <div style="font-size:12px;font-weight:600;color:var(--text-1);margin-bottom:10px;letter-spacing:0.02em;">发送快捷键</div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-2);cursor:pointer;margin-bottom:7px;">
+        <input type="radio" name="send-mode" value="ctrl_enter" onchange="applySendMode('ctrl_enter')" style="cursor:pointer;">
+        Ctrl + Enter 发送（Enter 换行）
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-2);cursor:pointer;">
+        <input type="radio" name="send-mode" value="enter" onchange="applySendMode('enter')" style="cursor:pointer;">
+        Enter 发送（Shift+Enter 换行）
+      </label>
+    </div>
+  </div>
+  <button onclick="doLogout()" style="font-size:12px;padding:4px 12px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text-2);cursor:pointer;">退出</button>
 </div>
 
 <div id="main">
@@ -907,12 +931,72 @@ body {
   </div>
 </div>
 
+<!-- ══════════════════════════
+     Stats Panel
+══════════════════════════ -->
+<div id="stats-main" style="display:none;flex:1;overflow-y:auto;padding:28px;background:var(--bg);">
+  <div style="max-width:960px;margin:0 auto;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;">
+      <h2 style="font-size:17px;font-weight:600;color:var(--text-1);letter-spacing:-0.01em;">数据统计</h2>
+      <button onclick="rebuildStats()" style="font-size:12px;padding:6px 16px;background:var(--bg-elevated);border:1px solid var(--border-mid);border-radius:var(--r-sm);color:var(--text-2);cursor:pointer;font-family:'JetBrains Mono',monospace;letter-spacing:0.03em;">重新计算</button>
+    </div>
+    <!-- 概况卡片 -->
+    <div id="stats-cards" style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:24px;"></div>
+    <!-- 客服数据表 -->
+    <div style="background:var(--bg-panel);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;">
+      <div style="padding:14px 20px;border-bottom:1px solid var(--border);font-size:13px;font-weight:500;color:var(--text-1);">客服数据</div>
+      <div id="stats-agents-table" style="overflow-x:auto;"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════
+     Accounts Panel
+══════════════════════════ -->
+<div id="accounts-main" style="display:none;flex:1;overflow-y:auto;padding:28px;background:var(--bg);">
+  <div style="max-width:800px;margin:0 auto;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;">
+      <h2 style="font-size:17px;font-weight:600;color:var(--text-1);letter-spacing:-0.01em;">账号管理</h2>
+      <button onclick="showAddAgentForm()" style="font-size:12px;padding:6px 16px;background:var(--blue);border:none;border-radius:var(--r-sm);color:#fff;cursor:pointer;font-family:'JetBrains Mono',monospace;">+ 添加账号</button>
+    </div>
+    <!-- Add form -->
+    <div id="add-agent-form" style="display:none;background:var(--bg-panel);border:1px solid var(--border-blue);border-radius:var(--r);padding:20px;margin-bottom:20px;">
+      <div style="font-size:13px;font-weight:500;color:var(--text-1);margin-bottom:16px;">添加新账号</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr auto auto;gap:10px;align-items:end;">
+        <div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px;">用户名</div>
+          <input id="new-agent-username" type="text" placeholder="客服2" style="width:100%;background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text-1);padding:9px 12px;font-size:13px;outline:none;box-sizing:border-box;" />
+        </div>
+        <div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px;">密码</div>
+          <input id="new-agent-password" type="password" placeholder="••••••" style="width:100%;background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text-1);padding:9px 12px;font-size:13px;outline:none;box-sizing:border-box;" />
+        </div>
+        <div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px;">管理员</div>
+          <input id="new-agent-is-admin" type="checkbox" style="width:18px;height:18px;margin:8px 0;cursor:pointer;" />
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button onclick="addAgent()" style="padding:9px 18px;background:var(--blue);border:none;border-radius:var(--r-sm);color:#fff;font-size:13px;cursor:pointer;">添加</button>
+          <button onclick="hideAddAgentForm()" style="padding:9px 14px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text-2);font-size:13px;cursor:pointer;">取消</button>
+        </div>
+      </div>
+    </div>
+    <!-- Agents table -->
+    <div style="background:var(--bg-panel);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;">
+      <div style="padding:14px 20px;border-bottom:1px solid var(--border);font-size:13px;font-weight:500;color:var(--text-1);">账号列表</div>
+      <div id="agents-table-container"></div>
+    </div>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <script>
 // ── 状态 ──────────────────────────────────────────────────────────────────────
 let scfUrl = '';
 let token = '';
+let agentName = '';
+let statsVisible = false;
 let currentOpenid = null;
 let sessions = {};          // openid -> 实时会话数据（WS/HTTP轮询）
 let knownOpenids = new Set();
@@ -934,8 +1018,9 @@ let httpFallbackTimer = null;
 
 // ── 初始化 ────────────────────────────────────────────────────────────────────
 window.onload = function() {
-  scfUrl = localStorage.getItem('scf_url') || '';
-  token  = localStorage.getItem('admin_token') || '';
+  scfUrl    = localStorage.getItem('scf_url') || '';
+  token     = localStorage.getItem('admin_token') || '';
+  agentName = localStorage.getItem('agent_name') || '';
 
   const params = new URLSearchParams(location.search);
   if (params.get('token')) token = params.get('token');
@@ -945,23 +1030,65 @@ window.onload = function() {
   if (token && scfUrl) enterApp();
 };
 
-function doLogin() {
-  const scf = document.getElementById('login-scf').value.trim().replace(/\/$/, '');
-  const tok = document.getElementById('login-token').value.trim();
-  const err = document.getElementById('login-err');
-  if (!scf) { err.textContent = '请填写服务器地址'; return; }
-  if (!tok) { err.textContent = '请填写访问令牌'; return; }
-  err.textContent = '';
-  scfUrl = scf;
-  token  = tok;
-  localStorage.setItem('scf_url', scfUrl);
-  localStorage.setItem('admin_token', token);
-  enterApp();
+async function doLogin() {
+  const scf      = document.getElementById('login-scf').value.trim().replace(/\/$/, '');
+  const username = document.getElementById('login-username').value.trim();
+  const password = document.getElementById('login-password').value;
+  const err      = document.getElementById('login-err');
+  if (!scf)      { err.textContent = '请填写服务器地址'; return; }
+  if (!username) { err.textContent = '请填写用户名'; return; }
+  if (!password) { err.textContent = '请填写密码'; return; }
+  err.textContent = '登录中...';
+  document.getElementById('login-btn').disabled = true;
+  try {
+    const res = await fetch(`${scf}/admin/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    if (res.status === 401) { err.textContent = '用户名或密码错误'; return; }
+    if (!res.ok) { err.textContent = `服务器错误 (${res.status})`; return; }
+    const data = await res.json();
+    scfUrl    = scf;
+    token     = data.token;
+    agentName = data.agent_name;
+    localStorage.setItem('scf_url', scfUrl);
+    localStorage.setItem('admin_token', token);
+    localStorage.setItem('agent_name', agentName);
+    err.textContent = '';
+    enterApp();
+  } catch(e) {
+    err.textContent = '网络错误，请检查服务器地址';
+  } finally {
+    document.getElementById('login-btn').disabled = false;
+  }
+}
+
+function doLogout() {
+  localStorage.removeItem('admin_token');
+  localStorage.removeItem('agent_name');
+  token = ''; agentName = '';
+  if (ws) { ws.close(); ws = null; }
+  clearTimeout(wsReconnectTimer);
+  clearInterval(httpFallbackTimer);
+  httpFallbackTimer = null;
+  statsVisible = false;
+  document.getElementById('login-page').style.display = '';  // 显示登录遮罩
+  document.getElementById('stats-main').style.display = 'none';
+  document.getElementById('accounts-main').style.display = 'none';
+  accountsVisible = false;
+  document.getElementById('main').style.display = '';  // 重置，登录遮罩会覆盖它
 }
 
 function enterApp() {
   document.getElementById('login-page').style.display = 'none';
+  document.getElementById('main').style.display = '';
   document.getElementById('scf-url-input').value = scfUrl;
+  const agentDisplay = document.getElementById('agent-name-display');
+  agentDisplay.textContent = agentName ? `👤 ${agentName}` : '';
+  if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission();
+  }
   loadSessions();
   connectWS();
   document.addEventListener('visibilitychange', () => {
@@ -1026,6 +1153,22 @@ function setStatus(dotClass, text) {
   document.getElementById('status-text').textContent = text;
 }
 
+function playBeep() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.type = 'sine';
+    osc.frequency.value = 880;
+    gain.gain.setValueAtTime(0.4, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.6);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.6);
+  } catch(e) {}
+}
+
 function handleSessionsData(sessionsArr) {
   const newSessions = {};
   for (const s of sessionsArr) newSessions[s.openid] = s;
@@ -1038,6 +1181,18 @@ function handleSessionsData(sessionsArr) {
     showToast('有新的人工服务请求！');
     document.title = '【新消息】客服管理后台';
     setTimeout(() => { document.title = '客服管理后台'; }, 5000);
+
+    // 提示音
+    playBeep();
+
+    // 系统通知（tab 最小化时也弹出）
+    if ('Notification' in window && Notification.permission === 'granted') {
+      new Notification('🔔 新的人工服务请求', {
+        body: `${newOids.length} 位用户等待接入`,
+        tag: 'new-human-session',
+        renotify: true,
+      });
+    }
   }
 
   // 检测当前会话是否有新消息，有则刷新历史
@@ -1297,7 +1452,7 @@ async function sendReply() {
     const res = await fetch(`${scfUrl}/admin/reply?token=${encodeURIComponent(token)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ openid: currentOpenid, message: text }),
+      body: JSON.stringify({ openid: currentOpenid, message: text, agent_name: agentName }),
     });
     const data = await res.json();
     if (data.ok) {
@@ -1326,7 +1481,7 @@ async function closeSession() {
     const res = await fetch(`${scfUrl}/admin/close?token=${encodeURIComponent(token)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ openid: currentOpenid }),
+      body: JSON.stringify({ openid: currentOpenid, agent_name: agentName }),
     });
     const data = await res.json();
     if (data.ok) {
@@ -1347,12 +1502,54 @@ async function closeSession() {
   }
 }
 
-// ── Ctrl+Enter 发送 ───────────────────────────────────────────────────────────
-document.addEventListener('keydown', function(e) {
-  if (e.ctrlKey && e.key === 'Enter') {
-    const inp = document.getElementById('reply-input');
-    if (document.activeElement === inp) sendReply();
+// ── 发送快捷键设置 ────────────────────────────────────────────────────────────
+let sendMode = localStorage.getItem('send_mode') || 'ctrl_enter';
+
+function applySendMode(mode) {
+  sendMode = mode;
+  localStorage.setItem('send_mode', mode);
+  const inp = document.getElementById('reply-input');
+  if (inp) inp.placeholder = mode === 'enter'
+    ? '输入回复内容，Enter 发送，Shift+Enter 换行...'
+    : '输入回复内容，Ctrl+Enter 发送...';
+  // 同步单选框状态
+  document.querySelectorAll('input[name="send-mode"]').forEach(r => {
+    r.checked = r.value === mode;
+  });
+}
+
+function toggleSettings() {
+  const popup = document.getElementById('settings-popup');
+  popup.style.display = popup.style.display === 'none' ? 'block' : 'none';
+}
+
+// 点击弹窗外关闭
+document.addEventListener('click', function(e) {
+  const popup = document.getElementById('settings-popup');
+  const btn   = document.getElementById('settings-btn');
+  if (popup && !popup.contains(e.target) && e.target !== btn) {
+    popup.style.display = 'none';
   }
+});
+
+document.addEventListener('keydown', function(e) {
+  const inp = document.getElementById('reply-input');
+  if (document.activeElement !== inp) return;
+  if (sendMode === 'enter') {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendReply();
+    }
+  } else {
+    if (e.ctrlKey && e.key === 'Enter') {
+      sendReply();
+    }
+  }
+});
+
+// 页面加载后初始化设置状态
+document.addEventListener('DOMContentLoaded', function() {
+  applySendMode(sendMode);
 });
 
 // ── 工具函数 ──────────────────────────────────────────────────────────────────
@@ -1381,6 +1578,7 @@ async function sendImage(input) {
   const formData = new FormData();
   formData.append('openid', currentOpenid);
   formData.append('image', file);
+  formData.append('agent_name', agentName);
 
   try {
     showToast('图片发送中...');
@@ -1519,6 +1717,191 @@ function renderHistoryMessages(oid) {
   }
 
   if (scrolledToBottom) container.scrollTop = container.scrollHeight;
+}
+
+// ── 统计面板 ──────────────────────────────────────────────────────────────────
+function toggleStats() {
+  statsVisible = !statsVisible;
+  if (statsVisible && accountsVisible) {
+    accountsVisible = false;
+    document.getElementById('accounts-main').style.display = 'none';
+  }
+  document.getElementById('main').style.display = statsVisible ? 'none' : '';
+  document.getElementById('stats-main').style.display = statsVisible ? 'flex' : 'none';
+  if (statsVisible) loadStats();
+}
+
+async function loadStats() {
+  if (!scfUrl || !token) return;
+  try {
+    const res = await fetch(`${scfUrl}/admin/stats?token=${encodeURIComponent(token)}`, { signal: AbortSignal.timeout(10000) });
+    if (!res.ok) { showToast('加载统计失败'); return; }
+    const data = await res.json();
+    if (data.ok) renderStats(data);
+  } catch(e) {
+    showToast('加载统计失败');
+  }
+}
+
+function renderStats(data) {
+  const overall = data.overall || {};
+  const agents  = data.agents  || {};
+
+  // 概况卡片
+  const pct  = v => v != null ? (v * 100).toFixed(1) + '%' : '—';
+  const secs = v => v != null ? Math.round(v) + 's' : '—';
+  const cards = [
+    { label: '总会话数',    value: overall.total_sessions    ?? '—' },
+    { label: '咨询用户数',  value: overall.total_users       ?? '—' },
+    { label: '有效应答率',  value: pct(overall.effective_rate)       },
+    { label: '平均应答时长',value: secs(overall.avg_response_time)   },
+    { label: '3分钟应答率', value: pct(overall.within_3min_rate)     },
+  ];
+  document.getElementById('stats-cards').innerHTML = cards.map(c => `
+    <div style="background:var(--bg-panel);border:1px solid var(--border);border-radius:var(--r);padding:16px 18px;">
+      <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-3);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:10px;">${c.label}</div>
+      <div style="font-size:22px;font-weight:600;color:var(--text-1);">${c.value}</div>
+    </div>
+  `).join('');
+
+  // 客服数据表
+  const rows = Object.entries(agents);
+  if (rows.length === 0) {
+    document.getElementById('stats-agents-table').innerHTML =
+      `<div style="padding:32px;text-align:center;color:var(--text-3);font-family:'JetBrains Mono',monospace;font-size:12px;">暂无客服数据</div>`;
+    return;
+  }
+  const thead = `<thead><tr>${['客服','会话数','接待用户','用户消息','客服消息','平均应答时长'].map(h=>
+    `<th style="padding:10px 16px;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-3);letter-spacing:0.08em;text-transform:uppercase;text-align:left;border-bottom:1px solid var(--border);white-space:nowrap;">${h}</th>`).join('')}</tr></thead>`;
+  const tbody = rows.map(([name, ag]) => `<tr>
+    ${[name, ag.sessions, ag.unique_users, ag.user_messages, ag.agent_messages, secs(ag.avg_response_time)].map((v,i) =>
+      `<td style="padding:10px 16px;font-size:13px;color:${i===0?'var(--text-1)':'var(--text-2)'};border-bottom:1px solid var(--border);white-space:nowrap;${i===0?'font-weight:500;':''}">${escHtml(String(v))}</td>`).join('')}
+  </tr>`).join('');
+  document.getElementById('stats-agents-table').innerHTML =
+    `<table style="width:100%;border-collapse:collapse;">${thead}<tbody>${tbody}</tbody></table>`;
+}
+
+async function rebuildStats() {
+  if (!confirm('将扫描全量日志重建统计，可能需要一段时间，确认继续？')) return;
+  showToast('重建中...');
+  try {
+    const res = await fetch(`${scfUrl}/admin/rebuild_stats?token=${encodeURIComponent(token)}`, { method: 'POST', signal: AbortSignal.timeout(60000) });
+    const data = await res.json();
+    if (data.ok) { showToast('统计重建完成'); loadStats(); }
+    else showToast('重建失败：' + (data.error || ''));
+  } catch(e) {
+    showToast('重建失败：网络错误');
+  }
+}
+
+// ── 账号管理 ──────────────────────────────────────────────────────────────────
+let accountsVisible = false;
+
+function toggleAccounts() {
+  accountsVisible = !accountsVisible;
+  // Hide stats if open
+  if (accountsVisible && statsVisible) {
+    statsVisible = false;
+    document.getElementById('stats-main').style.display = 'none';
+  }
+  document.getElementById('main').style.display = accountsVisible ? 'none' : '';
+  document.getElementById('accounts-main').style.display = accountsVisible ? 'flex' : 'none';
+  if (accountsVisible) loadAgentsList();
+}
+
+async function loadAgentsList() {
+  if (!scfUrl || !token) return;
+  document.getElementById('agents-table-container').innerHTML =
+    `<div style="padding:32px;text-align:center;color:var(--text-3);font-family:'JetBrains Mono',monospace;font-size:12px;">加载中...</div>`;
+  try {
+    const res = await fetch(`${scfUrl}/admin/agents?token=${encodeURIComponent(token)}`, { signal: AbortSignal.timeout(10000) });
+    if (!res.ok) { showToast('加载账号失败'); return; }
+    const data = await res.json();
+    if (data.ok) renderAgentsList(data.agents);
+  } catch(e) { showToast('加载账号失败'); }
+}
+
+function renderAgentsList(agents) {
+  if (!agents || agents.length === 0) {
+    document.getElementById('agents-table-container').innerHTML =
+      `<div style="padding:32px;text-align:center;color:var(--text-3);font-family:'JetBrains Mono',monospace;font-size:12px;">暂无账号</div>`;
+    return;
+  }
+  const secs = v => v != null ? Math.round(v) + 's' : '—';
+  const thead = `<thead><tr>${['用户名','角色','会话数','接待用户','平均应答','操作'].map(h =>
+    `<th style="padding:10px 16px;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-3);letter-spacing:0.08em;text-transform:uppercase;text-align:left;border-bottom:1px solid var(--border);white-space:nowrap;">${h}</th>`
+  ).join('')}</tr></thead>`;
+  const tbody = agents.map(a => `<tr>
+    <td style="padding:10px 16px;font-size:13px;font-weight:500;color:var(--text-1);border-bottom:1px solid var(--border);">${escHtml(a.username)}</td>
+    <td style="padding:10px 16px;font-size:12px;border-bottom:1px solid var(--border);">
+      <span style="padding:2px 8px;border-radius:4px;font-family:'JetBrains Mono',monospace;font-size:10px;${a.is_admin ? 'background:rgba(59,130,246,0.15);color:var(--blue-bright);' : 'background:var(--bg-elevated);color:var(--text-3);'}">${a.is_admin ? '管理员' : '客服'}</span>
+    </td>
+    <td style="padding:10px 16px;font-size:13px;color:var(--text-2);border-bottom:1px solid var(--border);">${a.sessions}</td>
+    <td style="padding:10px 16px;font-size:13px;color:var(--text-2);border-bottom:1px solid var(--border);">${a.unique_users}</td>
+    <td style="padding:10px 16px;font-size:13px;color:var(--text-2);border-bottom:1px solid var(--border);">${secs(a.avg_response_time)}</td>
+    <td style="padding:10px 16px;border-bottom:1px solid var(--border);">
+      <button onclick="changeAgentPassword('${escHtml(a.username)}')" style="font-size:11px;padding:4px 10px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:4px;color:var(--text-2);cursor:pointer;margin-right:6px;">改密码</button>
+      ${a.username !== agentName ? `<button onclick="deleteAgent('${escHtml(a.username)}')" style="font-size:11px;padding:4px 10px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);border-radius:4px;color:var(--red);cursor:pointer;">删除</button>` : '<span style="font-size:11px;color:var(--text-4);">（当前）</span>'}
+    </td>
+  </tr>`).join('');
+  document.getElementById('agents-table-container').innerHTML =
+    `<table style="width:100%;border-collapse:collapse;">${thead}<tbody>${tbody}</tbody></table>`;
+}
+
+function showAddAgentForm() {
+  document.getElementById('add-agent-form').style.display = '';
+  document.getElementById('new-agent-username').focus();
+}
+
+function hideAddAgentForm() {
+  document.getElementById('add-agent-form').style.display = 'none';
+  document.getElementById('new-agent-username').value = '';
+  document.getElementById('new-agent-password').value = '';
+  document.getElementById('new-agent-is-admin').checked = false;
+}
+
+async function addAgent() {
+  const username = document.getElementById('new-agent-username').value.trim();
+  const password = document.getElementById('new-agent-password').value.trim();
+  const is_admin = document.getElementById('new-agent-is-admin').checked;
+  if (!username || !password) { showToast('请填写用户名和密码'); return; }
+  try {
+    const res = await fetch(`${scfUrl}/admin/agents?token=${encodeURIComponent(token)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password, is_admin }),
+    });
+    const data = await res.json();
+    if (data.ok) { showToast('账号添加成功'); hideAddAgentForm(); loadAgentsList(); }
+    else showToast('添加失败：' + (data.error || ''));
+  } catch(e) { showToast('网络错误'); }
+}
+
+async function changeAgentPassword(username) {
+  const newPw = prompt(`修改 ${username} 的密码：`);
+  if (!newPw || !newPw.trim()) return;
+  try {
+    const res = await fetch(`${scfUrl}/admin/agents/${encodeURIComponent(username)}?token=${encodeURIComponent(token)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: newPw.trim() }),
+    });
+    const data = await res.json();
+    if (data.ok) { showToast('密码修改成功'); loadAgentsList(); }
+    else showToast('修改失败：' + (data.error || ''));
+  } catch(e) { showToast('网络错误'); }
+}
+
+async function deleteAgent(username) {
+  if (!confirm(`确认删除账号 ${username}？此操作不可撤销。`)) return;
+  try {
+    const res = await fetch(`${scfUrl}/admin/agents/${encodeURIComponent(username)}?token=${encodeURIComponent(token)}`, {
+      method: 'DELETE',
+    });
+    const data = await res.json();
+    if (data.ok) { showToast('账号已删除'); loadAgentsList(); }
+    else showToast('删除失败：' + (data.error || ''));
+  } catch(e) { showToast('网络错误'); }
 }
 
 let toastTimer;

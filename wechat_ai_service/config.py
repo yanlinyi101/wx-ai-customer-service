@@ -13,7 +13,10 @@
     CLEAR_SYSTEM_PROMPT — 明确问题模式，基于知识库回答（含 {context} 占位符）
 """
 
+import json
 import os
+import pathlib
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -115,3 +118,34 @@ LOG_DIR = os.getenv("LOG_DIR", "/opt/wechat_chat_logs")
 # ─────────────────────────────────────────────
 IMAGE_DIR      = os.getenv("IMAGE_DIR", "/opt/wechat_images")
 IMAGE_BASE_URL = os.getenv("IMAGE_BASE_URL", "")  # e.g. https://your-domain.com/images
+
+# ─────────────────────────────────────────────
+# 客服账号管理
+# ─────────────────────────────────────────────
+AGENTS_FILE = pathlib.Path(__file__).parent / "agents.json"
+
+
+import threading as _threading
+_agents_lock = _threading.Lock()
+
+
+def load_agents() -> list[dict]:
+    """加载客服账号列表"""
+    with _agents_lock:
+        if AGENTS_FILE.exists():
+            try:
+                with open(AGENTS_FILE, encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+    return []
+
+
+def save_agents(agents: list[dict]) -> None:
+    """保存客服账号列表（原子写入）"""
+    with _agents_lock:
+        AGENTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = AGENTS_FILE.with_suffix(".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(agents, f, ensure_ascii=False, indent=2)
+        tmp.replace(AGENTS_FILE)

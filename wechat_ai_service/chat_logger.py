@@ -74,10 +74,12 @@ async def append_log(
     session_id: str,
     image_url: str = "",
     msg_type: str = "text",
+    agent_name: str = "",
 ) -> None:
     """
     追加一条记录到本地 JSON 日志（始终生效，无需配置开关）。
     role: 'user' | 'ai' | 'agent'
+    agent_name: 回复的客服名称（仅 role='agent' 时有意义）
     """
     loop = asyncio.get_running_loop()
     async with _get_lock(openid):
@@ -96,6 +98,8 @@ async def append_log(
             entry: dict = {"role": role, "text": text, "ts": ts, "msg_type": msg_type}
             if image_url:
                 entry["image_url"] = image_url
+            if agent_name and role == "agent":
+                entry["agent_name"] = agent_name
             session["log"].append(entry)
             await loop.run_in_executor(None, _save_sync, openid, data)
         except Exception as e:
