@@ -25,7 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 from ai_service import get_ai_reply, needs_human, clear_history, get_history
-from chat_logger import append_log, end_session as end_chat_session, get_user_log
+from chat_logger import append_log, end_session as end_chat_session, get_user_log, list_all_users, update_nickname
 from config import (
     WECHAT_ENCODING_AES_KEY,
     WECHAT_TOKEN,
@@ -49,6 +49,7 @@ from human_service import (
 from wechat_api import (
     download_user_image,
     get_or_upload_media,
+    get_user_nickname,
     send_image_message,
     send_text_message,
     send_typing_indicator,
@@ -218,6 +219,24 @@ async def _push_sessions_to_queue(queue: asyncio.Queue) -> None:
         logger.warning(f"[WS] 入队失败: {e}")
 
 
+async def _get_nickname(openid: str) -> str:
+    """获取用户昵称：优先读本地缓存，失败返回空串（不缓存 openid 前缀）"""
+    try:
+        log = await get_user_log(openid)
+        nick = log.get("nickname", "")
+        # 只有真实昵称（非 openid 前缀）才返回
+        if nick and nick != openid[:8]:
+            return nick
+    except Exception:
+        pass
+    nick = await get_user_nickname(openid)
+    # 只缓存真实昵称，跳过 openid 前缀回退值
+    if nick and nick != openid[:8]:
+        await update_nickname(openid, nick)
+        return nick
+    return ""
+
+
 async def _broadcast_sessions() -> None:
     """有新消息/状态变化时推送给所有已连接管理员（通过各自的发送队列）"""
     if not _ws_queues:
@@ -227,19 +246,20 @@ async def _broadcast_sessions() -> None:
     except Exception as e:
         logger.error(f"[WS broadcast] 获取会话失败: {e}")
         return
-    payload = json.dumps({
-        "type": "sessions",
-        "sessions": [
-            {
-                "openid": oid,
-                "short": oid[:8],
-                "messages": data["messages"],
-                "pre_history": data["pre_history"],
-                "count": len(data["messages"]),
-            }
-            for oid, data in sessions.items()
-        ]
-    }, ensure_ascii=False)
+
+    async def _item(oid, data):
+        nick = await _get_nickname(oid)
+        return {
+            "openid": oid,
+            "short": oid[:8],
+            "nickname": nick,
+            "messages": data["messages"],
+            "pre_history": data["pre_history"],
+            "count": len(data["messages"]),
+        }
+
+    items = await asyncio.gather(*[_item(oid, data) for oid, data in sessions.items()])
+    payload = json.dumps({"type": "sessions", "sessions": list(items)}, ensure_ascii=False)
     for ws, q in list(_ws_queues.items()):
         q.put_nowait(payload)
 
@@ -383,19 +403,19 @@ async def admin_sessions(token: str = Query("")):
     except Exception as e:
         logger.error(f"[admin_sessions] 获取会话失败: {e}")
         sessions = {}   # 降级：返回空列表而非 500
-    return {
-        "ok": True,
-        "sessions": [
-            {
-                "openid": oid,
-                "short": oid[:8],
-                "messages": data["messages"],
-                "pre_history": data["pre_history"],
-                "count": len(data["messages"]),
-            }
-            for oid, data in sessions.items()
-        ],
-    }
+    async def _item(oid, data):
+        nick = await _get_nickname(oid)
+        return {
+            "openid": oid,
+            "short": oid[:8],
+            "nickname": nick,
+            "messages": data["messages"],
+            "pre_history": data["pre_history"],
+            "count": len(data["messages"]),
+        }
+
+    items = await asyncio.gather(*[_item(oid, data) for oid, data in sessions.items()])
+    return {"ok": True, "sessions": list(items)}
 
 
 @app.post("/admin/reply")
@@ -495,6 +515,30 @@ async def admin_reply_image(
     return {"ok": True}
 
 
+@app.get("/admin/all_users")
+async def admin_all_users(token: str = Query("")):
+    """返回所有用户基础信息（昵称、最后消息时间、消息总数），按最近活跃降序"""
+    if not _check_admin(token):
+        return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+    try:
+        users = await list_all_users()
+    except Exception as e:
+        logger.error(f"[admin_all_users] 获取失败: {e}")
+        return JSONResponse({"ok": False, "error": "获取失败"}, status_code=500)
+
+    async def fill_nickname(user: dict) -> dict:
+        if not user["nickname"]:
+            nick = await get_user_nickname(user["openid"])
+            new_user = {**user, "nickname": nick}
+            await update_nickname(user["openid"], nick)
+            return new_user
+        return user
+
+    filled = await asyncio.gather(*[fill_nickname(u) for u in users])
+    sorted_users = sorted(filled, key=lambda u: u["last_ts"], reverse=True)
+    return {"ok": True, "users": list(sorted_users)}
+
+
 @app.get("/admin/history/{openid}")
 async def admin_history(openid: str, token: str = Query("")):
     """返回指定用户的全量聊天记录（AI + 人工，从本地文件读取）"""
@@ -505,7 +549,12 @@ async def admin_history(openid: str, token: str = Query("")):
     except Exception as e:
         logger.error(f"[admin_history] 读取失败 openid={openid[:8]}: {e}")
         return JSONResponse({"ok": False, "error": "读取失败"}, status_code=500)
-    return {"ok": True, "openid": openid, "sessions": log.get("sessions", [])}
+    return {
+        "ok": True,
+        "openid": openid,
+        "nickname": log.get("nickname", ""),
+        "sessions": log.get("sessions", []),
+    }
 
 
 # ──────────────────────────────────────────

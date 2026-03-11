@@ -131,9 +131,12 @@ def retrieve(query: str) -> tuple[str, list[str], float]:
     for entry, score in top:
         lines.append(f"问：{entry['question']}\n答：{entry['answer']}")
         logger.debug(f"[RAG] 命中 score={score:.1f} | {entry['question'][:20]}")
-        # 收集图片链接（只取非空值，去重保持顺序）
-        url = entry.get("image_url", "").strip()
-        if url and url not in image_urls:
-            image_urls.append(url)
+
+    # 只取 top-1 条目的图片（最相关条目）
+    # 不从所有 top-K 条目收集图片，避免发送无关图片
+    top_entry = top[0][0]
+    url = top_entry.get("image_url", "").strip()
+    if url:
+        image_urls.append(url)
 
     return "\n\n---\n\n".join(lines), image_urls, top_score

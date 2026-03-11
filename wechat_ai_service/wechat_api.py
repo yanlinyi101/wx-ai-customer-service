@@ -210,6 +210,28 @@ async def send_typing_indicator(openid: str) -> None:
 # 转接人工客服
 # ──────────────────────────────────────────
 
+async def get_user_nickname(openid: str) -> str:
+    """获取微信用户昵称，失败则返回 openid 前8位"""
+    try:
+        token = await get_access_token()
+        url = (
+            f"https://api.weixin.qq.com/cgi-bin/user/info"
+            f"?access_token={token}&openid={openid}&lang=zh_CN"
+        )
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(url, timeout=10)
+            data = resp.json()
+        nickname = data.get("nickname", "")
+        return nickname if nickname else openid[:8]
+    except Exception as e:
+        logger.error(f"[get_user_nickname] 失败 openid={openid[:8]}: {e}")
+        return openid[:8]
+
+
+# ──────────────────────────────────────────
+# 转接人工客服
+# ──────────────────────────────────────────
+
 async def send_transfer_to_human(openid: str, kf_account: str = "") -> bool:
     """
     将对话转接给人工客服。

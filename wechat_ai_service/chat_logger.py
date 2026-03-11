@@ -51,7 +51,7 @@ def _load_sync(openid: str) -> dict:
         with open(_log_path(openid), "r", encoding="utf-8") as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
-        return {"openid": openid, "sessions": []}
+        return {"openid": openid, "nickname": "", "sessions": []}
 
 
 def _save_sync(openid: str, data: dict) -> None:
@@ -128,4 +128,51 @@ async def get_user_log(openid: str) -> dict:
             return await loop.run_in_executor(None, _load_sync, openid)
         except Exception as e:
             logger.error(f"[chat_logger] get_user_log 失败 openid={openid[:8]}: {e}")
-            return {"openid": openid, "sessions": []}
+            return {"openid": openid, "nickname": "", "sessions": []}
+
+
+async def update_nickname(openid: str, nickname: str) -> None:
+    """更新用户昵称到日志文件"""
+    loop = asyncio.get_running_loop()
+    async with _get_lock(openid):
+        try:
+            data = await loop.run_in_executor(None, _load_sync, openid)
+            new_data = {**data, "nickname": nickname}
+            await loop.run_in_executor(None, _save_sync, openid, new_data)
+        except Exception as e:
+            logger.error(f"[chat_logger] update_nickname 失败 openid={openid[:8]}: {e}")
+
+
+def _list_all_users_sync() -> list:
+    """扫描 LOG_DIR 下所有 .json 文件，返回用户基础信息列表"""
+    if not _log_dir.exists():
+        return []
+    users = []
+    for path in _log_dir.glob("*.json"):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            openid = data.get("openid", path.stem)
+            nickname = data.get("nickname", "")
+            sessions = data.get("sessions", [])
+            msg_count = sum(len(s.get("log", [])) for s in sessions)
+            last_ts = 0.0
+            for s in sessions:
+                for m in s.get("log", []):
+                    if m.get("ts", 0) > last_ts:
+                        last_ts = m["ts"]
+            users.append({
+                "openid": openid,
+                "nickname": nickname,
+                "last_ts": last_ts,
+                "msg_count": msg_count,
+            })
+        except Exception:
+            continue
+    return users
+
+
+async def list_all_users() -> list:
+    """获取所有用户基础信息（异步版本）"""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _list_all_users_sync)

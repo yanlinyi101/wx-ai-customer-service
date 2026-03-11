@@ -4,368 +4,906 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>客服管理后台</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f0f2f5; height: 100vh; display: flex; flex-direction: column; }
+/* ═══════════════════════════════════════════
+   Design Token System
+═══════════════════════════════════════════ */
+:root {
+  --bg:           #07090f;
+  --bg-panel:     #0d1220;
+  --bg-card:      #121929;
+  --bg-elevated:  #18223a;
+  --bg-hover:     #1c2844;
 
-  /* ── 顶部配置栏 ── */
-  #config-bar {
-    background: #1677ff;
-    color: #fff;
-    padding: 8px 16px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-shrink: 0;
-  }
-  #config-bar label { font-size: 13px; white-space: nowrap; }
-  #config-bar input {
-    flex: 1;
-    padding: 4px 8px;
-    border-radius: 4px;
-    border: none;
-    font-size: 13px;
-    min-width: 0;
-  }
-  #save-config {
-    background: #fff;
-    color: #1677ff;
-    border: none;
-    padding: 5px 12px;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 13px;
-    white-space: nowrap;
-  }
+  --border:       rgba(255,255,255,0.055);
+  --border-mid:   rgba(255,255,255,0.09);
+  --border-blue:  rgba(59,130,246,0.28);
+  --border-teal:  rgba(20,184,166,0.28);
 
-  /* ── 主区域 ── */
-  #main { display: flex; flex: 1; overflow: hidden; }
+  --blue:         #3b82f6;
+  --blue-bright:  #60a5fa;
+  --blue-dim:     rgba(59,130,246,0.10);
+  --blue-glow:    0 0 20px rgba(59,130,246,0.30);
+  --blue-glow-sm: 0 0 10px rgba(59,130,246,0.20);
 
-  /* ── 左侧会话列表 ── */
-  #sidebar {
-    width: 280px;
-    background: #fff;
-    border-right: 1px solid #e8e8e8;
-    display: flex;
-    flex-direction: column;
-    flex-shrink: 0;
-  }
-  #sidebar-header {
-    padding: 12px 16px;
-    border-bottom: 1px solid #e8e8e8;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-  #sidebar-header h2 { font-size: 14px; font-weight: 600; color: #333; }
-  #status-dot {
-    width: 8px; height: 8px;
-    border-radius: 50%;
-    background: #ccc;
-    display: inline-block;
-    margin-right: 4px;
-  }
-  #status-dot.online { background: #52c41a; }
-  #refresh-btn {
-    background: none;
-    border: 1px solid #d9d9d9;
-    border-radius: 4px;
-    padding: 3px 8px;
-    cursor: pointer;
-    font-size: 12px;
-    color: #666;
-  }
-  #refresh-btn:hover { border-color: #1677ff; color: #1677ff; }
+  --teal:         #14b8a6;
+  --teal-dim:     rgba(20,184,166,0.08);
+  --teal-glow:    0 0 16px rgba(20,184,166,0.25);
 
-  #session-list { flex: 1; overflow-y: auto; }
-  .session-item {
-    padding: 12px 16px;
-    border-bottom: 1px solid #f5f5f5;
-    cursor: pointer;
-    transition: background 0.15s;
-  }
-  .session-item:hover { background: #f5f5f5; }
-  .session-item.active { background: #e6f4ff; border-right: 3px solid #1677ff; }
-  .session-item.new-session { background: #fff7e6; }
-  .session-item .session-id {
-    font-size: 13px;
-    font-weight: 600;
-    color: #333;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-  .session-item .session-id .badge {
-    background: #1677ff;
-    color: #fff;
-    border-radius: 10px;
-    padding: 1px 7px;
-    font-size: 11px;
-    font-weight: normal;
-  }
-  .session-item .session-id .badge.new { background: #fa8c16; }
-  .session-item .session-preview {
-    font-size: 12px;
-    color: #999;
-    margin-top: 4px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
+  --green:        #22c55e;
+  --amber:        #f59e0b;
+  --red:          #ef4444;
+  --indigo:       #818cf8;
 
-  #empty-sessions {
-    text-align: center;
-    color: #bbb;
-    padding: 40px 16px;
-    font-size: 14px;
-  }
+  --text-1:       #e8edf5;
+  --text-2:       #8b9ab8;
+  --text-3:       #445270;
+  --text-4:       #2a3554;
 
-  /* ── 右侧聊天区 ── */
-  #chat-panel {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-  #chat-header {
-    padding: 12px 20px;
-    background: #fff;
-    border-bottom: 1px solid #e8e8e8;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-shrink: 0;
-  }
-  #chat-header h3 { font-size: 14px; color: #333; }
-  #close-btn {
-    background: #ff4d4f;
-    color: #fff;
-    border: none;
-    padding: 5px 14px;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 13px;
-  }
-  #close-btn:hover { background: #ff7875; }
-  #close-btn:disabled { background: #ccc; cursor: not-allowed; }
+  --r-xs: 4px;
+  --r-sm: 8px;
+  --r:    12px;
+  --r-lg: 18px;
 
-  #messages {
-    flex: 1;
-    overflow-y: auto;
-    padding: 16px 20px;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-  .msg-bubble {
-    max-width: 70%;
-    padding: 9px 13px;
-    border-radius: 10px;
-    font-size: 14px;
-    line-height: 1.5;
-    word-break: break-word;
-  }
-  .msg-user {
-    background: #f0f0f0;
-    color: #333;
-    align-self: flex-start;
-  }
-  .msg-agent {
-    background: #1677ff;
-    color: #fff;
-    align-self: flex-end;
-  }
-  .msg-time {
-    font-size: 11px;
-    color: #bbb;
-    margin-top: 3px;
-  }
-  .msg-row { display: flex; flex-direction: column; }
-  .msg-row.agent-row { align-items: flex-end; }
+  --ease: cubic-bezier(0.4,0,0.2,1);
+  --spring: cubic-bezier(0.16,1,0.3,1);
+  --fast: 0.15s;
+  --mid:  0.25s;
+  --slow: 0.4s;
+}
 
-  #no-session {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #bbb;
-    font-size: 15px;
-  }
+/* ═══════════════════════════════════════════
+   Reset & Base
+═══════════════════════════════════════════ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-  /* ── 回复区 ── */
-  #reply-area {
-    border-top: 1px solid #e8e8e8;
-    background: #fff;
-    padding: 12px 16px;
-    display: flex;
-    gap: 8px;
-    flex-shrink: 0;
-  }
-  #reply-input {
-    flex: 1;
-    border: 1px solid #d9d9d9;
-    border-radius: 6px;
-    padding: 8px 12px;
-    font-size: 14px;
-    resize: none;
-    outline: none;
-    transition: border-color 0.2s;
-    font-family: inherit;
-  }
-  #reply-input:focus { border-color: #1677ff; }
-  #send-btn {
-    background: #1677ff;
-    color: #fff;
-    border: none;
-    padding: 8px 18px;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 14px;
-    align-self: flex-end;
-  }
-  #send-btn:hover { background: #4096ff; }
-  #send-btn:disabled { background: #ccc; cursor: not-allowed; }
+body {
+  font-family: 'Noto Sans SC', sans-serif;
+  background: var(--bg);
+  color: var(--text-1);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  /* Ambient gradient */
+  background-image:
+    radial-gradient(ellipse 60% 50% at 15% 50%, rgba(59,130,246,0.045) 0%, transparent 100%),
+    radial-gradient(ellipse 50% 40% at 85% 15%, rgba(20,184,166,0.03) 0%, transparent 100%);
+}
 
-  /* ── 图片消息 ── */
-  .msg-image {
-    max-width: 200px;
-    border-radius: 8px;
-    cursor: pointer;
-    display: block;
-  }
+::-webkit-scrollbar { width: 3px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-mid); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--blue); }
 
-  /* ── 图片上传按钮 ── */
-  #img-upload-label {
-    display: flex;
-    align-items: flex-end;
-    cursor: pointer;
-    font-size: 20px;
-    padding-bottom: 6px;
-    line-height: 1;
-    user-select: none;
-  }
-  #img-upload-input { display: none; }
+/* ═══════════════════════════════════════════
+   Top Config Bar
+═══════════════════════════════════════════ */
+#config-bar {
+  height: 46px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  padding: 0 18px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  position: relative;
+}
+/* Accent line along bottom */
+#config-bar::after {
+  content: '';
+  position: absolute;
+  bottom: -1px; left: 0; right: 0; height: 1px;
+  background: linear-gradient(90deg, transparent 0%, var(--blue) 30%, var(--teal) 70%, transparent 100%);
+  opacity: 0.35;
+}
+#config-bar label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--text-3);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+#config-bar input {
+  flex: 1;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text-1);
+  padding: 5px 10px;
+  font-size: 12px;
+  font-family: 'JetBrains Mono', monospace;
+  outline: none;
+  min-width: 0;
+  transition: border-color var(--fast) var(--ease);
+}
+#config-bar input:focus { border-color: var(--border-blue); }
 
-  /* ── 历史分隔线 ── */
-  .history-separator {
-    text-align: center;
-    font-size: 11px;
-    color: #aaa;
-    padding: 8px 0 4px;
-  }
-  .msg-history {
-    opacity: 0.6;
-  }
+#save-config {
+  background: var(--blue-dim);
+  color: var(--blue-bright);
+  border: 1px solid var(--border-blue);
+  padding: 5px 14px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  font-size: 12px;
+  font-family: 'Noto Sans SC', sans-serif;
+  white-space: nowrap;
+  transition: all var(--fast) var(--ease);
+}
+#save-config:hover {
+  background: rgba(59,130,246,0.18);
+  box-shadow: var(--blue-glow-sm);
+}
 
-  /* ── 登录页 ── */
-  #login-page {
-    position: fixed; inset: 0;
-    background: #f0f2f5;
-    display: flex; align-items: center; justify-content: center;
-    z-index: 100;
-  }
-  #login-card {
-    background: #fff;
-    border-radius: 12px;
-    padding: 40px 36px;
-    width: 360px;
-    box-shadow: 0 4px 24px rgba(0,0,0,0.1);
-  }
-  #login-card h1 { font-size: 20px; color: #333; margin-bottom: 24px; text-align: center; }
-  #login-card input {
-    width: 100%;
-    border: 1px solid #d9d9d9;
-    border-radius: 6px;
-    padding: 10px 12px;
-    font-size: 14px;
-    margin-bottom: 12px;
-    outline: none;
-  }
-  #login-card input:focus { border-color: #1677ff; }
-  #login-btn {
-    width: 100%;
-    background: #1677ff;
-    color: #fff;
-    border: none;
-    padding: 10px;
-    border-radius: 6px;
-    font-size: 15px;
-    cursor: pointer;
-  }
-  #login-btn:hover { background: #4096ff; }
-  #login-err { color: #ff4d4f; font-size: 13px; margin-top: 8px; min-height: 18px; }
+/* Status indicator */
+#status-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--text-4);
+  flex-shrink: 0;
+  transition: background var(--mid) var(--ease), box-shadow var(--mid) var(--ease);
+}
+#status-dot.online {
+  background: var(--green);
+  box-shadow: 0 0 8px rgba(34,197,94,0.7);
+  animation: pulse-dot 2.5s ease infinite;
+}
+@keyframes pulse-dot {
+  0%,100% { box-shadow: 0 0 5px rgba(34,197,94,0.5); }
+  50%      { box-shadow: 0 0 14px rgba(34,197,94,0.9); }
+}
+#status-text {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--text-3);
+  white-space: nowrap;
+}
 
-  /* ── Toast ── */
-  #toast {
-    position: fixed;
-    bottom: 30px; left: 50%;
-    transform: translateX(-50%);
-    background: rgba(0,0,0,0.75);
-    color: #fff;
-    padding: 8px 20px;
-    border-radius: 20px;
-    font-size: 13px;
-    pointer-events: none;
-    opacity: 0;
-    transition: opacity 0.3s;
-    z-index: 200;
-  }
-  #toast.show { opacity: 1; }
+/* ═══════════════════════════════════════════
+   Main Layout
+═══════════════════════════════════════════ */
+#main { display: flex; flex: 1; overflow: hidden; }
+
+/* ═══════════════════════════════════════════
+   Sidebar
+═══════════════════════════════════════════ */
+#sidebar {
+  width: 292px;
+  flex-shrink: 0;
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+}
+
+/* Tab bar */
+#tab-bar {
+  display: flex;
+  gap: 2px;
+  padding: 10px 10px 0;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+}
+.tab-btn {
+  flex: 1;
+  padding: 8px 10px 9px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: 'Noto Sans SC', sans-serif;
+  font-weight: 400;
+  color: var(--text-3);
+  border-radius: var(--r-xs) var(--r-xs) 0 0;
+  border-bottom: 2px solid transparent;
+  transition: all var(--fast) var(--ease);
+  letter-spacing: 0.02em;
+  position: relative;
+  bottom: -1px;
+}
+.tab-btn:hover:not(.active) {
+  color: var(--text-2);
+  background: rgba(255,255,255,0.03);
+}
+.tab-btn.active {
+  color: var(--blue-bright);
+  border-bottom-color: var(--blue);
+  font-weight: 500;
+  background: var(--blue-dim);
+}
+#tab-history.active {
+  color: var(--teal);
+  border-bottom-color: var(--teal);
+  background: var(--teal-dim);
+}
+
+/* Sidebar header */
+#sidebar-header {
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+#sidebar-header h2 {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-3);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+#refresh-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--r-xs);
+  padding: 3px 10px;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--text-3);
+  transition: all var(--fast) var(--ease);
+}
+#refresh-btn:hover {
+  border-color: var(--border-blue);
+  color: var(--blue-bright);
+  background: var(--blue-dim);
+}
+
+/* History search */
+#history-search-bar {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+#history-search-input {
+  width: 100%;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text-1);
+  padding: 7px 12px 7px 32px;
+  font-size: 13px;
+  font-family: 'Noto Sans SC', sans-serif;
+  outline: none;
+  transition: border-color var(--fast) var(--ease);
+  /* Search icon via data URI */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='%23445270' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.35-4.35'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: 10px center;
+}
+#history-search-input::placeholder { color: var(--text-3); }
+#history-search-input:focus { border-color: var(--border-teal); }
+
+/* Session list container */
+#session-list { flex: 1; overflow-y: auto; }
+
+/* Empty state */
+#empty-sessions {
+  padding: 52px 20px;
+  text-align: center;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--text-4);
+  letter-spacing: 0.04em;
+  line-height: 1.8;
+}
+
+/* Waiting session cards */
+.session-item {
+  padding: 12px 14px 12px 17px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  transition: background var(--fast) var(--ease);
+  position: relative;
+}
+.session-item::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0; width: 3px;
+  background: transparent;
+  transition: background var(--fast) var(--ease);
+  border-radius: 0 2px 2px 0;
+}
+.session-item:hover { background: var(--bg-elevated); }
+.session-item.active { background: var(--blue-dim); }
+.session-item.active::before { background: var(--blue); }
+.session-item.new-session { background: rgba(245,158,11,0.05); }
+.session-item.new-session::before { background: var(--amber); }
+
+.session-id {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 5px;
+}
+.session-id > span:first-child {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--text-2);
+  font-weight: 500;
+}
+.badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 20px;
+  background: var(--blue-dim);
+  color: var(--blue-bright);
+  border: 1px solid var(--border-blue);
+  letter-spacing: 0.03em;
+}
+.badge.new {
+  background: rgba(245,158,11,0.10);
+  color: var(--amber);
+  border-color: rgba(245,158,11,0.28);
+  animation: flash-badge 1.5s ease infinite;
+}
+@keyframes flash-badge {
+  0%,100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+.session-preview {
+  font-size: 12px;
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* History user cards */
+.history-user-card {
+  padding: 12px 14px 12px 17px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  transition: background var(--fast) var(--ease);
+  position: relative;
+}
+.history-user-card::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0; width: 3px;
+  background: transparent;
+  transition: background var(--fast) var(--ease);
+  border-radius: 0 2px 2px 0;
+}
+.history-user-card:hover { background: var(--bg-elevated); }
+.history-user-card.active { background: var(--teal-dim); }
+.history-user-card.active::before { background: var(--teal); }
+.history-user-card .user-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-1);
+  margin-bottom: 4px;
+}
+.history-user-card .user-meta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--text-3);
+  letter-spacing: 0.02em;
+}
+
+/* ═══════════════════════════════════════════
+   Right Chat Panel
+═══════════════════════════════════════════ */
+#chat-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+#no-session {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  color: var(--text-4);
+}
+.no-session-icon {
+  width: 48px; height: 48px;
+  border: 1px solid var(--border-mid);
+  border-radius: var(--r);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  color: var(--text-4);
+  background: var(--bg-card);
+}
+.no-session-text {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--text-4);
+  letter-spacing: 0.04em;
+}
+
+#chat-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: slide-up var(--mid) var(--spring);
+}
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Chat header */
+#chat-header {
+  height: 52px;
+  padding: 0 20px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+#chat-title {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-2);
+  letter-spacing: 0.04em;
+  /* Truncate long titles */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  margin-right: 12px;
+}
+#close-btn {
+  flex-shrink: 0;
+  background: rgba(239,68,68,0.08);
+  color: var(--red);
+  border: 1px solid rgba(239,68,68,0.22);
+  padding: 5px 15px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  font-size: 12px;
+  font-family: 'Noto Sans SC', sans-serif;
+  transition: all var(--fast) var(--ease);
+  white-space: nowrap;
+}
+#close-btn:hover {
+  background: rgba(239,68,68,0.16);
+  box-shadow: 0 0 12px rgba(239,68,68,0.2);
+}
+#close-btn:disabled { opacity: 0.3; cursor: not-allowed; box-shadow: none; }
+
+/* Messages area */
+#messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 18px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Message rows */
+.msg-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  animation: msg-appear 0.18s var(--ease);
+}
+@keyframes msg-appear {
+  from { opacity: 0; transform: translateY(5px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.msg-row.agent-row { align-items: flex-end; }
+
+/* Bubbles */
+.msg-bubble {
+  max-width: 66%;
+  padding: 10px 14px;
+  border-radius: var(--r-sm);
+  font-size: 14px;
+  line-height: 1.65;
+  word-break: break-word;
+  position: relative;
+}
+
+/* User bubble */
+.msg-user {
+  background: var(--bg-elevated);
+  color: var(--text-1);
+  border: 1px solid var(--border-mid);
+  border-bottom-left-radius: 3px;
+}
+/* AI bubble – teal tint, left border accent */
+.msg-bubble.msg-user[data-role="ai"] {
+  background: rgba(20,184,166,0.07);
+  border-color: rgba(20,184,166,0.18);
+  border-left: 3px solid rgba(20,184,166,0.5);
+  padding-left: 12px;
+}
+/* Agent bubble – blue-indigo gradient */
+.msg-agent {
+  background: linear-gradient(135deg, #1a3a8c 0%, #2d2a7a 100%);
+  color: #c7d2fe;
+  border: 1px solid rgba(99,102,241,0.22);
+  border-bottom-right-radius: 3px;
+}
+
+/* Timestamp */
+.msg-time {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--text-4);
+  letter-spacing: 0.03em;
+  padding: 0 2px;
+}
+
+/* History session separator */
+.history-separator {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--text-4);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.history-separator::before, .history-separator::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+/* Image messages */
+.msg-image {
+  max-width: 200px;
+  border-radius: var(--r-xs);
+  cursor: zoom-in;
+  display: block;
+  opacity: 0.92;
+  transition: opacity var(--fast) var(--ease), transform var(--fast) var(--ease);
+}
+.msg-image:hover { opacity: 1; transform: scale(1.02); }
+
+/* ═══════════════════════════════════════════
+   Reply Area
+═══════════════════════════════════════════ */
+#reply-area {
+  border-top: 1px solid var(--border);
+  background: var(--bg-panel);
+  padding: 12px 16px;
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  flex-shrink: 0;
+}
+#img-upload-label {
+  display: flex;
+  align-items: flex-end;
+  padding-bottom: 9px;
+  cursor: pointer;
+  font-size: 17px;
+  user-select: none;
+  opacity: 0.4;
+  transition: opacity var(--fast) var(--ease);
+  flex-shrink: 0;
+}
+#img-upload-label:hover { opacity: 0.85; }
+#img-upload-input { display: none; }
+#reply-input {
+  flex: 1;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text-1);
+  padding: 9px 13px;
+  font-size: 13px;
+  font-family: 'Noto Sans SC', sans-serif;
+  resize: none;
+  outline: none;
+  line-height: 1.6;
+  transition: border-color var(--fast) var(--ease);
+}
+#reply-input::placeholder { color: var(--text-3); }
+#reply-input:focus { border-color: var(--border-blue); }
+#send-btn {
+  flex-shrink: 0;
+  background: var(--blue);
+  color: #fff;
+  border: none;
+  padding: 9px 22px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  font-size: 13px;
+  font-family: 'Noto Sans SC', sans-serif;
+  font-weight: 500;
+  transition: all var(--fast) var(--ease);
+  white-space: nowrap;
+}
+#send-btn:hover {
+  background: #2563eb;
+  box-shadow: 0 4px 16px rgba(59,130,246,0.40);
+  transform: translateY(-1px);
+}
+#send-btn:active { transform: translateY(0); }
+#send-btn:disabled {
+  background: var(--bg-elevated);
+  color: var(--text-3);
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
+}
+
+/* ═══════════════════════════════════════════
+   Login Page
+═══════════════════════════════════════════ */
+#login-page {
+  position: fixed; inset: 0;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  /* Dot grid background */
+  background-image:
+    radial-gradient(ellipse 55% 45% at 25% 55%, rgba(59,130,246,0.07) 0%, transparent 60%),
+    radial-gradient(ellipse 45% 40% at 80% 25%, rgba(20,184,166,0.04) 0%, transparent 55%),
+    radial-gradient(circle, rgba(255,255,255,0.09) 1px, transparent 1px);
+  background-size: auto, auto, 30px 30px;
+}
+
+#login-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--r-lg);
+  padding: 44px 40px 40px;
+  width: 388px;
+  position: relative;
+  overflow: hidden;
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,0.04),
+    0 24px 80px rgba(0,0,0,0.6),
+    0 8px 30px rgba(0,0,0,0.4);
+  animation: card-in var(--slow) var(--spring);
+}
+@keyframes card-in {
+  from { opacity: 0; transform: translateY(24px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+/* Top gradient accent */
+#login-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; height: 2px;
+  background: linear-gradient(90deg, var(--blue) 0%, var(--teal) 50%, var(--indigo) 100%);
+}
+/* Subtle inner glow */
+#login-card::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; height: 120px;
+  background: linear-gradient(180deg, rgba(59,130,246,0.05) 0%, transparent 100%);
+  pointer-events: none;
+}
+
+.login-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 28px;
+}
+.login-logo-mark {
+  width: 36px; height: 36px;
+  background: var(--blue-dim);
+  border: 1px solid var(--border-blue);
+  border-radius: var(--r-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+}
+.login-logo-text h1 {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-1);
+  letter-spacing: -0.01em;
+  line-height: 1;
+  margin-bottom: 3px;
+}
+.login-logo-text p {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--text-3);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.field {
+  margin-bottom: 14px;
+}
+.field-label {
+  display: block;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--text-3);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-bottom: 7px;
+}
+#login-card input {
+  width: 100%;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text-1);
+  padding: 10px 13px;
+  font-size: 13px;
+  font-family: 'JetBrains Mono', monospace;
+  outline: none;
+  transition: border-color var(--fast) var(--ease), box-shadow var(--fast) var(--ease);
+  box-sizing: border-box;
+}
+#login-card input::placeholder { color: var(--text-4); }
+#login-card input:focus {
+  border-color: var(--border-blue);
+  box-shadow: 0 0 0 3px var(--blue-dim);
+}
+
+#login-btn {
+  width: 100%;
+  background: var(--blue);
+  color: #fff;
+  border: none;
+  padding: 11px;
+  border-radius: var(--r-sm);
+  font-size: 14px;
+  font-family: 'Noto Sans SC', sans-serif;
+  font-weight: 500;
+  cursor: pointer;
+  letter-spacing: 0.05em;
+  transition: all var(--fast) var(--ease);
+  margin-top: 6px;
+}
+#login-btn:hover {
+  background: #2563eb;
+  box-shadow: 0 4px 22px rgba(59,130,246,0.45);
+  transform: translateY(-1px);
+}
+#login-btn:active { transform: translateY(0); }
+
+#login-err {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--red);
+  margin-top: 10px;
+  min-height: 16px;
+  letter-spacing: 0.03em;
+}
+
+/* ═══════════════════════════════════════════
+   Toast
+═══════════════════════════════════════════ */
+#toast {
+  position: fixed;
+  bottom: 28px; left: 50%;
+  transform: translateX(-50%) translateY(6px);
+  background: var(--bg-elevated);
+  color: var(--text-1);
+  border: 1px solid var(--border-mid);
+  padding: 9px 20px;
+  border-radius: 30px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  letter-spacing: 0.03em;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--fast) var(--ease), transform var(--fast) var(--ease);
+  z-index: 200;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.45);
+  white-space: nowrap;
+}
+#toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
 </style>
 </head>
 <body>
 
-<!-- 登录页 -->
+<!-- ══════════════════════════
+     Login Page
+══════════════════════════ -->
 <div id="login-page">
   <div id="login-card">
-    <h1>客服管理后台</h1>
-    <input id="login-scf" type="text" placeholder="服务器地址（如 https://your-server.com）" />
-    <input id="login-token" type="password" placeholder="访问令牌 (ADMIN_TOKEN)" />
+    <div class="login-logo">
+      <div class="login-logo-mark">💬</div>
+      <div class="login-logo-text">
+        <h1>客服管理后台</h1>
+        <p>WeChat AI Service Console</p>
+      </div>
+    </div>
+    <div class="field">
+      <label class="field-label" for="login-scf">服务器地址</label>
+      <input id="login-scf" type="text" placeholder="https://your-server.com" />
+    </div>
+    <div class="field">
+      <label class="field-label" for="login-token">访问令牌</label>
+      <input id="login-token" type="password" placeholder="ADMIN_TOKEN" />
+    </div>
     <button id="login-btn" onclick="doLogin()">登 录</button>
     <div id="login-err"></div>
   </div>
 </div>
 
-<!-- 主界面 -->
+<!-- ══════════════════════════
+     Main App
+══════════════════════════ -->
 <div id="config-bar">
-  <label>服务器地址：</label>
+  <label>SERVER</label>
   <input id="scf-url-input" type="text" placeholder="https://your-server.com" />
   <button id="save-config" onclick="saveConfig()">保存</button>
   <span id="status-dot"></span>
-  <span id="status-text" style="font-size:12px;">未连接</span>
+  <span id="status-text">未连接</span>
 </div>
 
 <div id="main">
-  <!-- 左侧 -->
+
+  <!-- Left Sidebar -->
   <div id="sidebar">
+    <div id="tab-bar">
+      <button id="tab-waiting" class="tab-btn active" onclick="switchTab('waiting')">等待中</button>
+      <button id="tab-history" class="tab-btn" onclick="switchTab('history')">历史记录</button>
+    </div>
     <div id="sidebar-header">
-      <h2>等待中的会话</h2>
+      <h2>Active Sessions</h2>
       <button id="refresh-btn" onclick="loadSessions()">刷新</button>
     </div>
+    <div id="history-search-bar" style="display:none">
+      <input id="history-search-input" type="text" placeholder="搜索用户昵称..." oninput="filterHistoryUsers(this.value)" />
+    </div>
     <div id="session-list">
-      <div id="empty-sessions">暂无等待中的用户</div>
+      <div id="empty-sessions">— 暂无等待中的用户 —</div>
     </div>
   </div>
 
-  <!-- 右侧 -->
+  <!-- Right Chat Panel -->
   <div id="chat-panel">
-    <div id="no-session">← 选择左侧用户开始处理</div>
+
+    <div id="no-session">
+      <div class="no-session-icon">💬</div>
+      <div class="no-session-text">← 选择左侧用户开始处理</div>
+    </div>
 
     <div id="chat-content" style="display:none; flex:1; flex-direction:column; overflow:hidden;">
       <div id="chat-header">
-        <h3 id="chat-title">用户：—</h3>
+        <h3 id="chat-title">USER: —</h3>
         <button id="close-btn" onclick="closeSession()">结束会话</button>
       </div>
       <div id="messages"></div>
       <div id="reply-area">
         <label id="img-upload-label" title="发送图片">
-          📷
+          📎
           <input id="img-upload-input" type="file" accept="image/*" onchange="sendImage(this)" />
         </label>
-        <textarea id="reply-input" rows="3" placeholder="输入回复内容，Enter 换行，Ctrl+Enter 发送..."></textarea>
-        <button id="send-btn" onclick="sendReply()">发 送</button>
+        <textarea id="reply-input" rows="3" placeholder="输入回复内容，Ctrl+Enter 发送..."></textarea>
+        <button id="send-btn" onclick="sendReply()">发送</button>
       </div>
     </div>
+
   </div>
 </div>
 
@@ -381,6 +919,12 @@ let knownOpenids = new Set();
 let currentHistory = null;  // 当前选中用户的全量文件历史（/admin/history 返回）
 let _loadingSessions = false;
 let _loadingHistory = false;
+
+// 历史记录 Tab 状态
+let currentTab = 'waiting';   // 'waiting' | 'history'
+let historyUsers = [];        // [{openid, nickname, last_ts, msg_count}]
+let historyOpenid = null;     // 历史 Tab 当前选中的 openid
+let historySearch = '';       // 搜索过滤词
 
 // WebSocket 状态
 let ws = null;
@@ -448,7 +992,7 @@ function connectWS() {
 
   thisWs.onopen = () => {
     if (ws !== thisWs) return;
-    wsReconnectDelay = 3000; // 连接成功后重置退避
+    wsReconnectDelay = 3000;
     setStatus('online', '已连接');
     clearTimeout(wsReconnectTimer);
     startBackupPolling();
@@ -468,8 +1012,7 @@ function connectWS() {
   thisWs.onclose = () => {
     clearInterval(thisWs._pingTimer);
     if (ws !== thisWs) return;
-    setStatus('', `重连中...`);
-    // 指数退避重连（最大30s）
+    setStatus('', '重连中...');
     wsReconnectDelay = Math.min(wsReconnectDelay * 1.5, 30000);
     wsReconnectTimer = setTimeout(connectWS, wsReconnectDelay);
     startBackupPolling();
@@ -502,7 +1045,7 @@ function handleSessionsData(sessionsArr) {
     const old = sessions[currentOpenid];
     const cur = newSessions[currentOpenid];
     if (!old || cur.count > old.count) {
-      fetchHistory(currentOpenid); // 有新消息，拉取最新历史
+      fetchHistory(currentOpenid);
     }
   }
 
@@ -510,12 +1053,14 @@ function handleSessionsData(sessionsArr) {
   knownOpenids = new Set(Object.keys(sessions));
   renderSessionList(newOids);
 
-  if (currentOpenid && !sessions[currentOpenid]) {
-    currentOpenid = null;
-    currentHistory = null;
-    showChatPanel(false);
-  } else if (currentOpenid && !_loadingHistory) {
-    renderMessages(currentOpenid);
+  if (currentTab === 'waiting') {
+    if (currentOpenid && !sessions[currentOpenid]) {
+      currentOpenid = null;
+      currentHistory = null;
+      showChatPanel(false);
+    } else if (currentOpenid && !_loadingHistory) {
+      renderMessages(currentOpenid);
+    }
   }
 }
 
@@ -567,6 +1112,10 @@ async function fetchHistory(oid) {
       const data = await res.json();
       if (data.ok && oid === currentOpenid) {
         currentHistory = data.sessions || [];
+        if (currentTab === 'history') {
+          const nick = data.nickname || oid.slice(0, 8) + '...';
+          document.getElementById('chat-title').textContent = `历史记录：${nick}`;
+        }
         renderMessages(oid);
       }
     }
@@ -602,8 +1151,8 @@ function renderSessionList(newOids) {
     div.className = 'session-item' + (oid === currentOpenid ? ' active' : '') + (isNew ? ' new-session' : '');
     div.innerHTML = `
       <div class="session-id">
-        <span>用户 ${s.short}...</span>
-        <span class="badge${isNew ? ' new' : ''}">${s.count} 条</span>
+        <span>${escHtml(s.nickname || (s.short + '...'))}</span>
+        <span class="badge${isNew ? ' new' : ''}">${s.count}</span>
       </div>
       <div class="session-preview">${escHtml(lastMsg)}</div>
     `;
@@ -615,28 +1164,36 @@ function renderSessionList(newOids) {
 // ── 选中会话 ──────────────────────────────────────────────────────────────────
 function selectSession(oid) {
   currentOpenid = oid;
-  currentHistory = null; // 清空旧历史
-  showChatPanel(true);
+  currentHistory = null;
+  showChatPanel(true, false);
   renderSessionList([]);
-  renderMessages(oid);   // 先用内存数据快速渲染
-  fetchHistory(oid);     // 再拉取完整文件历史
+  renderMessages(oid);
+  fetchHistory(oid);
 }
 
-function showChatPanel(show) {
+function showChatPanel(show, isHistory) {
   const noSess = document.getElementById('no-session');
   const chatContent = document.getElementById('chat-content');
+  const replyArea = document.getElementById('reply-area');
+  const closeBtn = document.getElementById('close-btn');
   if (show) {
     noSess.style.display = 'none';
     chatContent.style.display = 'flex';
+    replyArea.style.display = isHistory ? 'none' : '';
+    closeBtn.style.display = isHistory ? 'none' : '';
   } else {
     noSess.style.display = 'flex';
     chatContent.style.display = 'none';
-    document.getElementById('chat-title').textContent = '用户：—';
+    document.getElementById('chat-title').textContent = 'USER: —';
   }
 }
 
 // ── 渲染消息 ──────────────────────────────────────────────────────────────────
 function renderMessages(oid) {
+  if (currentTab === 'history') {
+    renderHistoryMessages(oid);
+    return;
+  }
   const s = sessions[oid];
   if (!s) return;
 
@@ -645,16 +1202,14 @@ function renderMessages(oid) {
   container.innerHTML = '';
 
   if (currentHistory && currentHistory.length > 0) {
-    // ── 从文件历史渲染（完整 AI + 人工记录）──────────────────────────────────
-    document.getElementById('chat-title').textContent = `用户：${s.short}... （完整记录）`;
+    document.getElementById('chat-title').textContent = `${s.nickname || (s.short + '...')} · 完整记录`;
 
     let allFileTs = 0;
     for (const session of currentHistory) {
       const isHuman = session.session_id.startsWith('human_');
-      const label = isHuman ? '── 人工接待 ──' : '── AI 对话 ──';
       const sep = document.createElement('div');
       sep.className = 'history-separator';
-      sep.textContent = label;
+      sep.textContent = isHuman ? '人工接待' : 'AI 对话';
       container.appendChild(sep);
 
       for (const m of session.log) {
@@ -663,33 +1218,31 @@ function renderMessages(oid) {
       }
     }
 
-    // 追加文件中还没写入的实时内存消息（避免重复显示）
     const inMemNew = (s.messages || []).filter(m => m.ts > allFileTs);
     if (inMemNew.length > 0) {
       const sep2 = document.createElement('div');
       sep2.className = 'history-separator';
-      sep2.textContent = '── 最新消息 ──';
+      sep2.textContent = '最新消息';
       container.appendChild(sep2);
       for (const m of inMemNew.sort((a, b) => a.ts - b.ts)) {
         appendMsgBubble(container, m);
       }
     }
   } else {
-    // ── 回退：用内存数据渲染（文件未加载完成时的快速显示）────────────────────
-    document.getElementById('chat-title').textContent = `用户：${s.short}... （共 ${s.count} 条）`;
+    document.getElementById('chat-title').textContent = `${s.nickname || (s.short + '...')} · ${s.count} 条消息`;
 
     const preHist = (s.pre_history || []).slice(-5);
     if (preHist.length > 0) {
       const sep1 = document.createElement('div');
       sep1.className = 'history-separator';
-      sep1.textContent = `── 转人工前最近 ${preHist.length} 条对话 ──`;
+      sep1.textContent = `转人工前 ${preHist.length} 条`;
       container.appendChild(sep1);
       for (const m of preHist) {
         appendMsgBubble(container, { ...m, role: m.role === 'assistant' ? 'agent' : m.role, ts: 0 });
       }
       const sep2 = document.createElement('div');
       sep2.className = 'history-separator';
-      sep2.textContent = '── 人工对话 ──';
+      sep2.textContent = '人工对话';
       container.appendChild(sep2);
     }
 
@@ -708,6 +1261,7 @@ function appendMsgBubble(container, msg) {
   row.className = 'msg-row' + (isAgent ? ' agent-row' : '');
   const bubble = document.createElement('div');
   bubble.className = 'msg-bubble ' + (isAgent ? 'msg-agent' : 'msg-user');
+  bubble.dataset.role = role; // enables AI-specific CSS
   if (msg.msg_type === 'image' && msg.image_url) {
     const img = document.createElement('img');
     img.src = msg.image_url;
@@ -749,7 +1303,6 @@ async function sendReply() {
     if (data.ok) {
       input.value = '';
       showToast('发送成功');
-      // 发送后立即拉取最新历史（文件已写入）
       await fetchHistory(currentOpenid);
     } else {
       showToast('发送失败：' + (data.error || '未知错误'));
@@ -809,6 +1362,12 @@ function formatTime(ts) {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
+function formatDate(ts) {
+  const d = new Date(ts * 1000);
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 function escHtml(str) {
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
@@ -817,7 +1376,7 @@ function escHtml(str) {
 async function sendImage(input) {
   if (!currentOpenid || !input.files || !input.files[0]) return;
   const file = input.files[0];
-  input.value = ''; // 清空，允许重复选同一文件
+  input.value = '';
 
   const formData = new FormData();
   formData.append('openid', currentOpenid);
@@ -839,6 +1398,127 @@ async function sendImage(input) {
   } catch(e) {
     showToast('网络错误，请重试');
   }
+}
+
+// ── 历史记录 Tab ───────────────────────────────────────────────────────────────
+function switchTab(tab) {
+  currentTab = tab;
+  document.getElementById('tab-waiting').classList.toggle('active', tab === 'waiting');
+  document.getElementById('tab-history').classList.toggle('active', tab === 'history');
+  document.getElementById('sidebar-header').style.display = tab === 'waiting' ? '' : 'none';
+  document.getElementById('history-search-bar').style.display = tab === 'history' ? '' : 'none';
+
+  currentOpenid = null;
+  currentHistory = null;
+  historyOpenid = null;
+  showChatPanel(false);
+
+  if (tab === 'waiting') {
+    renderSessionList([]);
+  } else {
+    if (historyUsers.length === 0) {
+      fetchAllUsers();
+    } else {
+      renderHistoryUserList();
+    }
+  }
+}
+
+async function fetchAllUsers() {
+  if (!scfUrl || !token) return;
+  const list = document.getElementById('session-list');
+  list.innerHTML = `<div id="empty-sessions" style="display:block">加载中...</div>`;
+  try {
+    const res = await fetch(
+      `${scfUrl}/admin/all_users?token=${encodeURIComponent(token)}`,
+      { signal: AbortSignal.timeout(20000) }
+    );
+    if (res.ok) {
+      const data = await res.json();
+      if (data.ok) {
+        historyUsers = data.users || [];
+        renderHistoryUserList();
+      }
+    } else {
+      showToast('加载历史用户失败');
+      renderHistoryUserList();
+    }
+  } catch(e) {
+    showToast('加载历史用户失败');
+    renderHistoryUserList();
+  }
+}
+
+function filterHistoryUsers(query) {
+  historySearch = query.toLowerCase();
+  renderHistoryUserList();
+}
+
+function renderHistoryUserList() {
+  const list = document.getElementById('session-list');
+
+  const filtered = historyUsers.filter(u => {
+    if (!historySearch) return true;
+    const name = (u.nickname || u.openid).toLowerCase();
+    return name.includes(historySearch);
+  });
+
+  if (filtered.length === 0) {
+    const msg = historyUsers.length === 0 ? '— 暂无历史记录 —' : '— 没有匹配的用户 —';
+    list.innerHTML = `<div id="empty-sessions">${msg}</div>`;
+    return;
+  }
+
+  list.innerHTML = '';
+  for (const u of filtered) {
+    const div = document.createElement('div');
+    div.className = 'history-user-card' + (u.openid === historyOpenid ? ' active' : '');
+    const name = u.nickname || (u.openid.slice(0, 8) + '...');
+    const lastTime = u.last_ts > 0 ? formatDate(u.last_ts) : '无记录';
+    div.innerHTML = `
+      <div class="user-name">${escHtml(name)}</div>
+      <div class="user-meta">${u.msg_count} 条 · ${lastTime}</div>
+    `;
+    div.onclick = () => selectHistoryUser(u.openid, u.nickname);
+    list.appendChild(div);
+  }
+}
+
+function selectHistoryUser(oid, nickname) {
+  historyOpenid = oid;
+  currentOpenid = oid;
+  currentHistory = null;
+  showChatPanel(true, true);
+  renderHistoryUserList();
+  const container = document.getElementById('messages');
+  container.innerHTML = `<div style="text-align:center;color:var(--text-4);padding:48px;font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:0.04em;">加载中...</div>`;
+  const displayName = nickname || (oid.slice(0, 8) + '...');
+  document.getElementById('chat-title').textContent = `历史记录：${displayName}`;
+  fetchHistory(oid);
+}
+
+function renderHistoryMessages(oid) {
+  const container = document.getElementById('messages');
+  const scrolledToBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 60;
+  container.innerHTML = '';
+
+  if (!currentHistory || currentHistory.length === 0) {
+    container.innerHTML = `<div style="text-align:center;color:var(--text-4);padding:48px;font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:0.04em;">暂无聊天记录</div>`;
+    return;
+  }
+
+  for (const session of currentHistory) {
+    const isHuman = session.session_id.startsWith('human_');
+    const sep = document.createElement('div');
+    sep.className = 'history-separator';
+    sep.textContent = isHuman ? '人工接待' : 'AI 对话';
+    container.appendChild(sep);
+    for (const m of session.log) {
+      appendMsgBubble(container, m);
+    }
+  }
+
+  if (scrolledToBottom) container.scrollTop = container.scrollHeight;
 }
 
 let toastTimer;
