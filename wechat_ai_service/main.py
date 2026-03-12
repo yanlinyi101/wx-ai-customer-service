@@ -687,6 +687,7 @@ async def admin_list_agents(token: str = Query("")):
         result.append({
             "username": name,
             "is_admin": a.get("is_admin", False),
+            "online": a.get("online", False),
             "sessions": s.get("sessions", 0),
             "unique_users": s.get("unique_users", 0),
             "avg_response_time": s.get("avg_response_time"),
@@ -743,6 +744,30 @@ async def admin_update_agent(username: str, request: Request, token: str = Query
             return JSONResponse({"ok": False, "error": "账号不存在"}, status_code=404)
         await asyncio.to_thread(save_agents, new_agents)
     return {"ok": True}
+
+
+@app.put("/admin/agents/{username}/status")
+async def admin_set_agent_status(username: str, request: Request, token: str = Query("")):
+    """设置客服在线/离线状态（客服自己调用，无需管理员权限）"""
+    if not _check_admin(token):
+        return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+    body = await request.json()
+    online = bool(body.get("online", False))
+    async with _agents_lock:
+        agents = await asyncio.to_thread(load_agents)
+        new_agents = []
+        found = False
+        for a in agents:
+            if a.get("username") == username:
+                found = True
+                new_agents.append({**a, "online": online})
+            else:
+                new_agents.append(a)
+        if not found:
+            return JSONResponse({"ok": False, "error": "账号不存在"}, status_code=404)
+        await asyncio.to_thread(save_agents, new_agents)
+    logger.info(f"[agent_status] {username} → {'在线' if online else '离线'}")
+    return {"ok": True, "online": online}
 
 
 @app.delete("/admin/agents/{username}")

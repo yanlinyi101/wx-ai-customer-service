@@ -35,6 +35,10 @@ from config import (
     CHAT_SYSTEM_PROMPT,
     VAGUE_SYSTEM_PROMPT,
     CLEAR_SYSTEM_PROMPT,
+    LOGISTICS_KEYWORDS,
+    FRUSTRATION_KEYWORDS,
+    LOW_CONF_TURNS_THRESHOLD,
+    MAX_TURNS_BEFORE_ESCALATION,
 )
 from rag_service import retrieve
 
@@ -45,6 +49,8 @@ logger = logging.getLogger(__name__)
 # key: openid, value: deque of {"role": ..., "content": ...}
 # ──────────────────────────────────────────
 _history: dict[str, deque] = defaultdict(lambda: deque(maxlen=MAX_HISTORY_TURNS * 2))
+_turn_counts: dict[str, int] = defaultdict(int)      # 累计对话轮数
+_low_conf_counts: dict[str, int] = defaultdict(int)  # 连续低置信度轮数
 
 
 def needs_human(text: str) -> bool:
@@ -62,6 +68,38 @@ def get_history(openid: str) -> list:
 
 def clear_history(openid: str) -> None:
     _history[openid].clear()
+    _turn_counts[openid] = 0
+    _low_conf_counts[openid] = 0
+
+
+# ──────────────────────────────────────────
+# 转人工升级提示
+# ──────────────────────────────────────────
+
+_ESCALATION_HINTS = {
+    "logistics":        "📦 查询物流/快递信息需要人工协助，回复「转人工」即可转接客服为您查询。",
+    "frustration":      "非常抱歉给您带来不便！如需进一步帮助，回复「转人工」将为您转接专属客服。",
+    "low_confidence":   "如果以上回答未能解决您的问题，可回复「转人工」让客服为您详细处理。",
+    "long_conversation":"我们已沟通较长时间，如问题仍未解决，建议回复「转人工」由客服跟进。",
+}
+
+
+def check_escalation(openid: str, text: str, top_score: float) -> str | None:
+    """返回升级原因字符串或 None。优先级：物流 > 烦躁 > 低置信度 > 长对话"""
+    if any(kw in text for kw in LOGISTICS_KEYWORDS):
+        return "logistics"
+    if any(kw in text for kw in FRUSTRATION_KEYWORDS):
+        return "frustration"
+    if top_score < INTENT_HIGH_THRESHOLD:
+        _low_conf_counts[openid] += 1
+        if _low_conf_counts[openid] >= LOW_CONF_TURNS_THRESHOLD:
+            return "low_confidence"
+    else:
+        _low_conf_counts[openid] = 0  # 高分命中重置
+    turns = _turn_counts[openid]
+    if turns >= MAX_TURNS_BEFORE_ESCALATION and (turns - MAX_TURNS_BEFORE_ESCALATION) % 5 == 0:
+        return "long_conversation"
+    return None
 
 
 # ──────────────────────────────────────────
@@ -90,6 +128,7 @@ async def get_ai_reply(openid: str, user_message: str) -> tuple[str, list[str]]:
     # RAG：检索知识库并路由意图
     image_urls: list[str] = []
     context = ""
+    top_score = INTENT_HIGH_THRESHOLD  # 默认值：RAG 未启用时不触发低置信度提示
     if RAG_ENABLED:
         context, image_urls, top_score = retrieve(user_message)
         intent = _classify_intent(top_score)
@@ -149,4 +188,8 @@ async def get_ai_reply(openid: str, user_message: str) -> tuple[str, list[str]]:
                     image_urls = []
 
     add_to_history(openid, "assistant", reply)
+    _turn_counts[openid] += 1
+    reason = check_escalation(openid, user_message, top_score)
+    if reason:
+        reply = reply + "\n\n" + _ESCALATION_HINTS[reason]
     return reply, image_urls
