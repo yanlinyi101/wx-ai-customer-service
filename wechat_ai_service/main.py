@@ -53,6 +53,9 @@ from human_service import (
     attribute_session,
     get_session_attribution,
     get_session_queue,
+    claim_session,
+    get_claimer,
+    clear_claim,
 )
 from wechat_api import (
     download_user_image,
@@ -196,7 +199,7 @@ async def admin_login(request: Request):
     agents = load_agents()
     for agent in agents:
         if agent.get("username") == username and agent.get("password") == password:
-            return {"ok": True, "agent_name": username, "token": ADMIN_TOKEN}
+            return {"ok": True, "agent_name": username, "token": ADMIN_TOKEN, "is_admin": agent.get("is_admin", False)}
     return JSONResponse({"ok": False, "error": "用户名或密码错误"}, status_code=401)
 
 
@@ -276,6 +279,7 @@ async def _push_sessions_to_queue(queue: asyncio.Queue) -> None:
                     "messages": data["messages"],
                     "pre_history": data["pre_history"],
                     "count": len(data["messages"]),
+                    "claimed_by": data.get("claimed_by", ""),
                 }
                 for oid, data in sessions.items()
             ]
@@ -322,6 +326,7 @@ async def _broadcast_sessions() -> None:
             "messages": data["messages"],
             "pre_history": data["pre_history"],
             "count": len(data["messages"]),
+            "claimed_by": data.get("claimed_by", ""),
         }
 
     items = await asyncio.gather(*[_item(oid, data) for oid, data in sessions.items()])
@@ -478,6 +483,7 @@ async def admin_sessions(token: str = Query("")):
             "messages": data["messages"],
             "pre_history": data["pre_history"],
             "count": len(data["messages"]),
+            "claimed_by": data.get("claimed_by", ""),
         }
 
     items = await asyncio.gather(*[_item(oid, data) for oid, data in sessions.items()])
@@ -495,6 +501,9 @@ async def admin_reply(request: Request, token: str = Query("")):
     agent_name = body.get("agent_name", "").strip()
     if not openid or not message:
         return JSONResponse({"ok": False, "error": "openid 和 message 不能为空"}, status_code=400)
+    claimer = get_claimer(openid)
+    if claimer and claimer != agent_name:
+        return JSONResponse({"ok": False, "error": f"该会话已被 {claimer} 接入"}, status_code=403)
     success = await send_text_message(openid, message)
     if success:
         logger.info(f"[人工回复] openid={openid[:8]}... agent={agent_name or '未知'}")
@@ -507,6 +516,25 @@ async def admin_reply(request: Request, token: str = Query("")):
         return {"ok": True}
     else:
         return JSONResponse({"ok": False, "error": "发送失败"}, status_code=500)
+
+
+@app.post("/admin/claim")
+async def admin_claim(request: Request, token: str = Query("")):
+    """客服认领会话（独占接入，其他客服只读）"""
+    if not _check_admin(token):
+        return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+    body = await request.json()
+    openid = body.get("openid", "").strip()
+    agent_name = body.get("agent_name", "").strip()
+    if not openid or not agent_name:
+        return JSONResponse({"ok": False, "error": "openid 和 agent_name 不能为空"}, status_code=400)
+    success = claim_session(openid, agent_name)
+    if success:
+        await _broadcast_sessions()
+        return {"ok": True}
+    else:
+        claimer = get_claimer(openid)
+        return JSONResponse({"ok": False, "error": f"该会话已被 {claimer} 接入"}, status_code=409)
 
 
 @app.post("/admin/close")
@@ -786,6 +814,28 @@ async def admin_delete_agent(username: str, token: str = Query("")):
     return {"ok": True}
 
 
+@app.get("/admin/gray")
+async def admin_gray_get(token: str = Query("")):
+    """获取灰度测试配置"""
+    if not _check_admin(token):
+        return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+    from gray_service import get_config
+    return {"ok": True, **get_config()}
+
+
+@app.post("/admin/gray")
+async def admin_gray_set(request: Request, token: str = Query("")):
+    """更新灰度测试配置"""
+    if not _check_admin(token):
+        return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+    body = await request.json()
+    enabled  = bool(body.get("enabled", False))
+    ai_ratio = float(body.get("ai_ratio", 0.2))
+    from gray_service import update_config
+    update_config(enabled, ai_ratio)
+    return {"ok": True}
+
+
 # ──────────────────────────────────────────
 # 辅助函数
 # ──────────────────────────────────────────
@@ -888,6 +938,16 @@ async def _handle_human_image(openid: str, pic_url: str) -> None:
 async def _handle_text(openid: str, text: str) -> None:
     """处理用户文本消息"""
 
+    # ── 灰度分组：human 组静默进入人工队列 ──────────────────────────────────
+    from gray_service import get_or_assign
+    if get_or_assign(openid) == "human":
+        await enter_human_mode(openid)
+        await push_message(openid, text, "user")
+        await _broadcast_sessions()
+        logger.info(f"[GRAY] {openid[:8]} → human queue")
+        return
+    # ────────────────────────────────────────────────────────────────────────
+
     # 发送"正在输入"提示（让用户知道消息已收到）
     await send_typing_indicator(openid)
 
@@ -907,8 +967,14 @@ async def _handle_text(openid: str, text: str) -> None:
     else:
         logger.error(f"[文字回复失败] openid={openid[:8]}...")
 
-    # 2. 逐张发送图片（最多5张，支持多图知识库条目）
-    for url in image_urls[:5]:
+    # 2. 逐张发送图片（最多10张，支持多图知识库条目）
+    # 以下场景不发图：
+    # ① 回复含"转人工"升级提示
+    # ② AI 告知"没有相关信息，建议联系人工客服"（RAG误命中其他产品条目时的回退措辞）
+    # ③ 用户已进入人工模式（竞态：AI请求处理中用户转人工）
+    if "转人工" in reply or "人工客服" in reply or await is_human_mode(openid):
+        image_urls = []
+    for url in image_urls[:10]:
         try:
             media_id = await get_or_upload_media(url)
             if media_id:
