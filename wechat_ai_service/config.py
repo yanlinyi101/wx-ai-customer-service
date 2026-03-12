@@ -138,6 +138,12 @@ IMAGE_BASE_URL = os.getenv("IMAGE_BASE_URL", "")  # e.g. https://your-domain.com
 # ─────────────────────────────────────────────
 # 客服账号管理
 # ─────────────────────────────────────────────
+# ─────────────────────────────────────────────
+# 灰度测试配置
+# ─────────────────────────────────────────────
+GRAY_ENABLED  = os.getenv("GRAY_ENABLED",  "false").lower() == "true"
+GRAY_AI_RATIO = float(os.getenv("GRAY_AI_RATIO", "0.2"))
+
 AGENTS_FILE = pathlib.Path(__file__).parent / "agents.json"
 
 

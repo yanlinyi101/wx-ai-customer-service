@@ -820,6 +820,10 @@ body {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
 }
+@keyframes grayPulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.25; }
+}
 </style>
 </head>
 <body>
@@ -866,22 +870,9 @@ body {
   <span style="flex:1"></span>
   <span id="agent-name-display" style="font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text-2);margin-right:8px;"></span>
   <button id="status-toggle-btn" onclick="toggleAgentStatus()" style="font-size:12px;padding:4px 12px;border-radius:var(--r-sm);border:1px solid var(--border);cursor:pointer;margin-right:6px;font-weight:500;"></button>
-  <button onclick="toggleStats()" style="font-size:12px;padding:4px 12px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text-2);cursor:pointer;margin-right:6px;">统计</button>
+  <button id="stats-btn" onclick="toggleStats()" style="font-size:12px;padding:4px 12px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text-2);cursor:pointer;margin-right:6px;">统计</button>
   <button onclick="toggleAccounts()" style="font-size:12px;padding:4px 12px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text-2);cursor:pointer;margin-right:6px;">账号</button>
-  <div style="position:relative;display:inline-block;margin-right:6px;">
-    <button onclick="toggleSettings()" id="settings-btn" style="font-size:12px;padding:4px 12px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text-2);cursor:pointer;">设置</button>
-    <div id="settings-popup" style="display:none;position:absolute;right:0;top:calc(100% + 6px);background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--r-md);padding:14px 16px;min-width:220px;z-index:999;box-shadow:0 4px 16px rgba(0,0,0,0.18);">
-      <div style="font-size:12px;font-weight:600;color:var(--text-1);margin-bottom:10px;letter-spacing:0.02em;">发送快捷键</div>
-      <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-2);cursor:pointer;margin-bottom:7px;">
-        <input type="radio" name="send-mode" value="ctrl_enter" onchange="applySendMode('ctrl_enter')" style="cursor:pointer;">
-        Ctrl + Enter 发送（Enter 换行）
-      </label>
-      <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-2);cursor:pointer;">
-        <input type="radio" name="send-mode" value="enter" onchange="applySendMode('enter')" style="cursor:pointer;">
-        Enter 发送（Shift+Enter 换行）
-      </label>
-    </div>
-  </div>
+  <button onclick="toggleSettings()" id="settings-btn" style="font-size:12px;padding:4px 12px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text-2);cursor:pointer;margin-right:6px;">设置</button>
   <button onclick="doLogout()" style="font-size:12px;padding:4px 12px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text-2);cursor:pointer;">退出</button>
 </div>
 
@@ -990,6 +981,88 @@ body {
   </div>
 </div>
 
+<!-- ══════════════════════════
+     Settings Panel
+══════════════════════════ -->
+<div id="settings-main" style="display:none;flex:1;overflow-y:auto;padding:28px;background:var(--bg);">
+  <div style="max-width:680px;margin:0 auto;">
+    <h2 style="font-size:17px;font-weight:600;color:var(--text-1);letter-spacing:-0.01em;margin-bottom:24px;">系统设置</h2>
+
+    <!-- 发送快捷键 -->
+    <div style="background:var(--bg-panel);border:1px solid var(--border);border-radius:var(--r);padding:20px 24px;margin-bottom:16px;">
+      <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:14px;">发送快捷键</div>
+      <label style="display:flex;align-items:center;gap:10px;font-size:13px;color:var(--text-2);cursor:pointer;margin-bottom:10px;">
+        <input type="radio" name="send-mode" value="ctrl_enter" onchange="applySendMode('ctrl_enter')" style="cursor:pointer;">
+        <span>Ctrl + Enter 发送 <span style="color:var(--text-3);font-size:11px;">（Enter 换行）</span></span>
+      </label>
+      <label style="display:flex;align-items:center;gap:10px;font-size:13px;color:var(--text-2);cursor:pointer;">
+        <input type="radio" name="send-mode" value="enter" onchange="applySendMode('enter')" style="cursor:pointer;">
+        <span>Enter 发送 <span style="color:var(--text-3);font-size:11px;">（Shift+Enter 换行）</span></span>
+      </label>
+    </div>
+
+    <!-- 灰度测试 -->
+    <div style="background:var(--bg-panel);border:1px solid var(--border);border-radius:var(--r);padding:20px 24px;">
+      <!-- 标题行 -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:0.08em;">灰度测试</div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span id="gray-live-dot" style="width:6px;height:6px;border-radius:50%;background:var(--teal);display:inline-block;animation:grayPulse 2s ease-in-out infinite;"></span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-3);letter-spacing:0.04em;">LIVE</span>
+          <span id="gray-status-badge" style="padding:2px 10px;border-radius:4px;font-family:'JetBrains Mono',monospace;font-size:11px;background:var(--bg-elevated);color:var(--text-3);">—</span>
+        </div>
+      </div>
+
+      <!-- 流量分布可视化 -->
+      <div style="margin-bottom:20px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <span style="font-size:12px;color:var(--text-3);">流量分布</span>
+          <span id="gray-last-refresh" style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-4);">—</span>
+        </div>
+        <!-- 分流条 -->
+        <div style="height:36px;border-radius:var(--r-sm);overflow:hidden;display:flex;border:1px solid var(--border-mid);">
+          <div id="gray-ai-fill" style="width:20%;background:linear-gradient(90deg,rgba(59,130,246,0.85),rgba(59,130,246,0.60));transition:width 0.7s var(--spring);display:flex;align-items:center;justify-content:center;overflow:hidden;min-width:0;">
+            <span id="gray-ai-label" style="font-size:11px;font-family:'JetBrains Mono',monospace;color:#fff;font-weight:600;white-space:nowrap;padding:0 6px;"></span>
+          </div>
+          <div id="gray-human-fill" style="flex:1;background:linear-gradient(90deg,rgba(20,184,166,0.45),rgba(20,184,166,0.25));transition:flex 0.7s var(--spring);display:flex;align-items:center;justify-content:center;overflow:hidden;min-width:0;">
+            <span id="gray-human-label" style="font-size:11px;font-family:'JetBrains Mono',monospace;color:rgba(255,255,255,0.7);font-weight:600;white-space:nowrap;padding:0 6px;"></span>
+          </div>
+        </div>
+        <!-- 图例 -->
+        <div style="display:flex;gap:20px;margin-top:8px;">
+          <span style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-3);">
+            <span style="width:8px;height:8px;border-radius:2px;background:var(--blue);display:inline-block;flex-shrink:0;"></span>
+            AI 处理 &nbsp;<span id="gray-ai-pct" style="color:var(--text-2);font-family:'JetBrains Mono',monospace;font-weight:500;">—</span>
+          </span>
+          <span style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-3);">
+            <span style="width:8px;height:8px;border-radius:2px;background:var(--teal);display:inline-block;flex-shrink:0;"></span>
+            人工队列 &nbsp;<span id="gray-human-pct" style="color:var(--text-2);font-family:'JetBrains Mono',monospace;font-weight:500;">—</span>
+          </span>
+        </div>
+      </div>
+
+      <!-- 控制区 -->
+      <div style="background:var(--bg-elevated);border-radius:var(--r-sm);padding:16px 18px;">
+        <label style="display:flex;align-items:center;gap:10px;font-size:13px;color:var(--text-2);cursor:pointer;margin-bottom:14px;">
+          <input type="checkbox" id="gray-enabled-panel" oninput="updateGrayPreview(document.getElementById('gray-ratio-panel').value)" style="width:16px;height:16px;cursor:pointer;">
+          启用灰度测试（AI 处理部分流量）
+        </label>
+        <div style="display:flex;align-items:center;gap:12px;">
+          <span style="font-size:12px;color:var(--text-3);white-space:nowrap;font-family:'JetBrains Mono',monospace;letter-spacing:0.03em;">AI 比例</span>
+          <input type="range" id="gray-ratio-panel" min="0" max="100" value="20"
+                 oninput="updateGrayPreview(this.value)"
+                 style="flex:1;">
+          <span id="gray-ratio-val-panel" style="font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--text-1);width:40px;text-align:right;font-weight:500;">20%</span>
+        </div>
+        <button onclick="saveGrayConfigPanel()"
+                style="margin-top:14px;padding:8px 24px;background:var(--blue);border:none;border-radius:var(--r-sm);color:#fff;font-size:13px;cursor:pointer;font-family:'JetBrains Mono',monospace;letter-spacing:0.03em;">
+          保存配置
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <script>
@@ -998,6 +1071,7 @@ let scfUrl = '';
 let token = '';
 let agentName = '';
 let agentOnline = false;
+let isAdmin = false;
 let statsVisible = false;
 let currentOpenid = null;
 let sessions = {};          // openid -> 实时会话数据（WS/HTTP轮询）
@@ -1071,6 +1145,7 @@ window.onload = function() {
   scfUrl    = localStorage.getItem('scf_url') || '';
   token     = localStorage.getItem('admin_token') || '';
   agentName = localStorage.getItem('agent_name') || '';
+  isAdmin   = localStorage.getItem('is_admin') === '1';
 
   const params = new URLSearchParams(location.search);
   if (params.get('token')) token = params.get('token');
@@ -1102,9 +1177,11 @@ async function doLogin() {
     scfUrl    = scf;
     token     = data.token;
     agentName = data.agent_name;
+    isAdmin   = data.is_admin === true;
     localStorage.setItem('scf_url', scfUrl);
     localStorage.setItem('admin_token', token);
     localStorage.setItem('agent_name', agentName);
+    localStorage.setItem('is_admin', isAdmin ? '1' : '0');
     err.textContent = '';
     enterApp();
   } catch(e) {
@@ -1117,16 +1194,20 @@ async function doLogin() {
 function doLogout() {
   localStorage.removeItem('admin_token');
   localStorage.removeItem('agent_name');
-  token = ''; agentName = '';
+  localStorage.removeItem('is_admin');
+  token = ''; agentName = ''; isAdmin = false;
   if (ws) { ws.close(); ws = null; }
   clearTimeout(wsReconnectTimer);
   clearInterval(httpFallbackTimer);
   httpFallbackTimer = null;
   statsVisible = false;
+  accountsVisible = false;
+  settingsVisible = false;
+  stopGrayPolling();
   document.getElementById('login-page').style.display = '';  // 显示登录遮罩
   document.getElementById('stats-main').style.display = 'none';
   document.getElementById('accounts-main').style.display = 'none';
-  accountsVisible = false;
+  document.getElementById('settings-main').style.display = 'none';
   document.getElementById('main').style.display = '';  // 重置，登录遮罩会覆盖它
 }
 
@@ -1136,11 +1217,13 @@ function enterApp() {
   document.getElementById('scf-url-input').value = scfUrl;
   const agentDisplay = document.getElementById('agent-name-display');
   agentDisplay.textContent = agentName ? `👤 ${agentName}` : '';
+  document.getElementById('stats-btn').style.display = isAdmin ? '' : 'none';
   if ('Notification' in window && Notification.permission === 'default') {
     Notification.requestPermission();
   }
   fetchMyStatus();
   loadSessions();
+  loadGrayConfig();
   connectWS();
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
@@ -1246,11 +1329,11 @@ function handleSessionsData(sessionsArr) {
     }
   }
 
-  // 检测当前会话是否有新消息，有则刷新历史
+  // 检测当前会话是否有新消息，或历史未加载，则刷新历史
   if (currentOpenid && newSessions[currentOpenid]) {
     const old = sessions[currentOpenid];
     const cur = newSessions[currentOpenid];
-    if (!old || cur.count > old.count) {
+    if (!old || cur.count > old.count || (!currentHistory && !_loadingHistory)) {
       fetchHistory(currentOpenid);
     }
   }
@@ -1355,14 +1438,16 @@ function renderSessionList(newOids) {
       : '（无消息）';
     const div = document.createElement('div');
     div.className = 'session-item' + (oid === currentOpenid ? ' active' : '') + (isNew ? ' new-session' : '');
+    const claimedBy = s.claimed_by || '';
     div.innerHTML = `
       <div class="session-id">
         <span>${escHtml(s.nickname || (s.short + '...'))}</span>
         <span class="badge${isNew ? ' new' : ''}">${s.count}</span>
       </div>
-      <div class="session-preview">${escHtml(lastMsg)}</div>
+      ${claimedBy ? `<div style="font-size:10px;color:var(--teal);font-family:'JetBrains Mono',monospace;margin-bottom:2px;letter-spacing:0.02em;">已接入: ${escHtml(claimedBy)}</div>` : ''}
+      <div class="session-preview">${renderWxEmoji(lastMsg)}</div>
     `;
-    div.onclick = () => selectSession(oid);
+    div.onclick = () => confirmJoinSession(oid);
     list.appendChild(div);
   }
 }
@@ -1374,7 +1459,6 @@ function selectSession(oid) {
   showChatPanel(true, false);
   renderSessionList([]);
   renderMessages(oid);
-  fetchHistory(oid);
 }
 
 function showChatPanel(show, isHistory) {
@@ -1402,6 +1486,8 @@ function renderMessages(oid) {
   }
   const s = sessions[oid];
   if (!s) return;
+
+  updateReplyAreaForClaim(s.claimed_by || '');
 
   const container = document.getElementById('messages');
   const scrolledToBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 60;
@@ -1476,7 +1562,7 @@ function appendMsgBubble(container, msg) {
     img.onclick = () => window.open(msg.image_url, '_blank');
     bubble.appendChild(img);
   } else {
-    bubble.textContent = msg.text || '';
+    bubble.innerHTML = renderWxEmoji(msg.text || '');
   }
   row.appendChild(bubble);
   const ts = msg.ts || 0;
@@ -1563,25 +1649,133 @@ function applySendMode(mode) {
   if (inp) inp.placeholder = mode === 'enter'
     ? '输入回复内容，Enter 发送，Shift+Enter 换行...'
     : '输入回复内容，Ctrl+Enter 发送...';
-  // 同步单选框状态
+  // 同步所有 send-mode 单选框（含设置面板内的）
   document.querySelectorAll('input[name="send-mode"]').forEach(r => {
     r.checked = r.value === mode;
   });
 }
 
-function toggleSettings() {
-  const popup = document.getElementById('settings-popup');
-  popup.style.display = popup.style.display === 'none' ? 'block' : 'none';
+// ── 灰度配置 ────────────────────────────────────────────────────────────────
+let _grayPollTimer = null;
+
+function startGrayPolling() {
+  loadGrayConfig();
+  _grayPollTimer = setInterval(loadGrayConfig, 8000);
 }
 
-// 点击弹窗外关闭
-document.addEventListener('click', function(e) {
-  const popup = document.getElementById('settings-popup');
-  const btn   = document.getElementById('settings-btn');
-  if (popup && !popup.contains(e.target) && e.target !== btn) {
-    popup.style.display = 'none';
+function stopGrayPolling() {
+  clearInterval(_grayPollTimer);
+  _grayPollTimer = null;
+}
+
+async function loadGrayConfig() {
+  if (!scfUrl || !token) return;
+  try {
+    const res = await fetch(`${scfUrl}/admin/gray?token=${encodeURIComponent(token)}`);
+    const data = await res.json();
+    if (!data.ok) return;
+
+    const pct = Math.round(data.ai_ratio * 100);
+
+    // 同步面板控件
+    const enabledEl = document.getElementById('gray-enabled-panel');
+    const ratioEl   = document.getElementById('gray-ratio-panel');
+    if (enabledEl) enabledEl.checked = data.enabled;
+    if (ratioEl)   ratioEl.value     = pct;
+
+    // 更新可视化（使用服务器真实数据）
+    renderGrayViz(data.enabled, pct);
+
+    // 刷新时间
+    const now = new Date();
+    const ts  = now.getHours().toString().padStart(2,'0') + ':' +
+                now.getMinutes().toString().padStart(2,'0') + ':' +
+                now.getSeconds().toString().padStart(2,'0');
+    const el = document.getElementById('gray-last-refresh');
+    if (el) el.textContent = '更新于 ' + ts;
+  } catch(e) {}
+}
+
+function renderGrayViz(enabled, pct) {
+  // 状态徽章
+  const badge = document.getElementById('gray-status-badge');
+  if (badge) {
+    badge.textContent = enabled ? '已启用' : '已关闭';
+    badge.style.background = enabled
+      ? 'rgba(59,130,246,0.15)' : 'var(--bg-elevated)';
+    badge.style.color = enabled
+      ? 'var(--blue-bright)' : 'var(--text-3)';
   }
-});
+
+  // 分流比例值标签
+  const aiPct  = document.getElementById('gray-ai-pct');
+  const humPct = document.getElementById('gray-human-pct');
+  const rvalEl = document.getElementById('gray-ratio-val-panel');
+  const effectivePct = enabled ? pct : 0;
+  if (aiPct)  aiPct.textContent  = effectivePct + '%';
+  if (humPct) humPct.textContent = (100 - effectivePct) + '%';
+  if (rvalEl) rvalEl.textContent = pct + '%';
+
+  // 分流条
+  const aiBar  = document.getElementById('gray-ai-fill');
+  const humBar = document.getElementById('gray-human-fill');
+  const aiLabel  = document.getElementById('gray-ai-label');
+  const humLabel = document.getElementById('gray-human-label');
+  if (!aiBar || !humBar) return;
+
+  const w = effectivePct;
+  aiBar.style.width  = w + '%';
+  if (aiLabel)  aiLabel.textContent  = w > 8 ? ('AI ' + w + '%')      : '';
+  if (humLabel) humLabel.textContent = (100-w) > 8 ? ('人工 ' + (100-w) + '%') : '';
+}
+
+function updateGrayPreview(val) {
+  // slider 拖动时实时预览（不影响服务器数据）
+  const enabled = document.getElementById('gray-enabled-panel')?.checked ?? true;
+  renderGrayViz(enabled, parseInt(val));
+}
+
+async function saveGrayConfigPanel() {
+  const enabled  = document.getElementById('gray-enabled-panel').checked;
+  const ai_ratio = parseInt(document.getElementById('gray-ratio-panel').value) / 100;
+  try {
+    const res = await fetch(`${scfUrl}/admin/gray?token=${encodeURIComponent(token)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled, ai_ratio }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      showToast('灰度配置已保存');
+      loadGrayConfig();   // 立即刷新真实状态
+    } else {
+      showToast('保存失败: ' + (data.error || ''));
+    }
+  } catch(e) { showToast('网络错误'); }
+}
+
+// ── 设置面板 ─────────────────────────────────────────────────────────────────
+let settingsVisible = false;
+
+function toggleSettings() {
+  settingsVisible = !settingsVisible;
+  if (settingsVisible && statsVisible) {
+    statsVisible = false;
+    document.getElementById('stats-main').style.display = 'none';
+  }
+  if (settingsVisible && accountsVisible) {
+    accountsVisible = false;
+    document.getElementById('accounts-main').style.display = 'none';
+  }
+  document.getElementById('main').style.display     = settingsVisible ? 'none' : '';
+  document.getElementById('settings-main').style.display = settingsVisible ? 'flex' : 'none';
+  if (settingsVisible) {
+    applySendMode(sendMode);   // 同步单选框
+    startGrayPolling();
+  } else {
+    stopGrayPolling();
+  }
+}
 
 document.addEventListener('keydown', function(e) {
   const inp = document.getElementById('reply-input');
@@ -1602,6 +1796,110 @@ document.addEventListener('keydown', function(e) {
 document.addEventListener('DOMContentLoaded', function() {
   applySendMode(sendMode);
 });
+
+// ── 接入确认弹窗 ──────────────────────────────────────────────────────────────
+function confirmJoinSession(oid) {
+  const s = sessions[oid];
+  const name = s ? (s.nickname || (s.short + '...')) : oid.slice(0, 8) + '...';
+  showConfirmModal(`接入 ${name} 的会话？`, () => claimAndJoinSession(oid));
+}
+
+async function claimAndJoinSession(oid) {
+  try {
+    const res = await fetch(`${scfUrl}/admin/claim?token=${encodeURIComponent(token)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ openid: oid, agent_name: agentName }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      if (sessions[oid]) sessions[oid].claimed_by = agentName;
+      // 直接设置状态并 await 加载历史，确保历史记录可靠显示
+      currentOpenid = oid;
+      currentHistory = null;
+      showChatPanel(true, false);
+      renderSessionList([]);
+      renderMessages(oid);
+      await fetchHistory(oid);
+    } else {
+      showToast(data.error || '认领失败');
+    }
+  } catch(e) {
+    showToast('网络错误，请重试');
+  }
+}
+
+function showConfirmModal(message, onConfirm) {
+  const existing = document.getElementById('confirm-modal');
+  if (existing) existing.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'confirm-modal';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:9000;display:flex;align-items:center;justify-content:center;';
+  const card = document.createElement('div');
+  card.style.cssText = 'background:var(--bg-elevated);border:1px solid var(--border-blue);border-radius:var(--r-lg);padding:28px 32px;min-width:280px;max-width:400px;box-shadow:0 8px 32px rgba(0,0,0,0.4);';
+  card.innerHTML = `
+    <div style="font-size:14px;font-weight:600;color:var(--text-1);margin-bottom:20px;">${escHtml(message)}</div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;">
+      <button id="confirm-cancel-btn" style="padding:8px 18px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text-2);cursor:pointer;font-size:13px;">取消</button>
+      <button id="confirm-ok-btn" style="padding:8px 20px;background:var(--blue);border:none;border-radius:var(--r-sm);color:#fff;cursor:pointer;font-size:13px;font-weight:500;">接入</button>
+    </div>
+  `;
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  document.getElementById('confirm-cancel-btn').onclick = close;
+  document.getElementById('confirm-ok-btn').onclick = () => { close(); onConfirm(); };
+  overlay.onclick = (e) => { if (e.target === overlay) close(); };
+}
+
+// ── 独占会话：更新回复区域状态 ────────────────────────────────────────────────
+function updateReplyAreaForClaim(claimer) {
+  const input = document.getElementById('reply-input');
+  const btn = document.getElementById('send-btn');
+  const imgLabel = document.getElementById('img-upload-label');
+  if (claimer && claimer !== agentName) {
+    input.disabled = true;
+    btn.disabled = true;
+    imgLabel.style.opacity = '0.4';
+    imgLabel.style.pointerEvents = 'none';
+    input.placeholder = `已由 ${claimer} 接入，只读模式`;
+  } else {
+    input.disabled = false;
+    btn.disabled = false;
+    imgLabel.style.opacity = '';
+    imgLabel.style.pointerEvents = '';
+    applySendMode(sendMode);
+  }
+}
+
+// ── 微信表情映射 ──────────────────────────────────────────────────────────────
+const WX_EMOJI_MAP = {
+  '[微笑]': '😊', '[撇嘴]': '😏', '[色]': '😍', '[发呆]': '😳',
+  '[得意]': '😎', '[流泪]': '😢', '[害羞]': '☺️', '[闭嘴]': '🤐',
+  '[睡]': '😴', '[大哭]': '😭', '[尴尬]': '😅', '[发怒]': '😡',
+  '[调皮]': '😜', '[呲牙]': '😁', '[惊讶]': '😲', '[难过]': '😞',
+  '[囧]': '😳', '[抓狂]': '🤯', '[吐]': '🤢', '[偷笑]': '😄',
+  '[愉快]': '😄', '[白眼]': '🙄', '[傲慢]': '😤', '[困]': '😪',
+  '[惊恐]': '😱', '[憨笑]': '😄', '[强]': '👍', '[弱]': '👎',
+  '[握手]': '🤝', '[胜利]': '✌️', '[抱拳]': '🙏', '[勾引]': '😉',
+  '[拳头]': '👊', '[差劲]': '👎', '[爱心]': '❤️', '[心碎]': '💔',
+  '[西瓜]': '🍉', '[啤酒]': '🍺', '[咖啡]': '☕', '[蛋糕]': '🎂',
+  '[玫瑰]': '🌹', '[凋谢]': '🥀', '[嘴唇]': '💋', '[爱你]': '🥰',
+  '[太阳]': '☀️', '[月亮]': '🌙', '[地球]': '🌍', '[OK]': '👌',
+  '[好的]': '👌', '[加油]': '💪', '[拜托]': '🙏', '[飞吻]': '😘',
+  '[可爱]': '🥰', '[晕]': '😵', '[衰]': '😓', '[骷髅]': '💀',
+  '[敲打]': '🔨', '[再见]': '👋', '[擦汗]': '😓', '[鼓掌]': '👏',
+  '[坏笑]': '😈', '[糗大了]': '😖',
+};
+
+function renderWxEmoji(text) {
+  const escaped = escHtml(text);
+  return escaped.replace(/\[([^\]]{1,8})\]/g, (match) => {
+    return WX_EMOJI_MAP[match]
+      ? `<span title="${match}">${WX_EMOJI_MAP[match]}</span>`
+      : match;
+  });
+}
 
 // ── 工具函数 ──────────────────────────────────────────────────────────────────
 function formatTime(ts) {
@@ -1777,6 +2075,11 @@ function toggleStats() {
     accountsVisible = false;
     document.getElementById('accounts-main').style.display = 'none';
   }
+  if (statsVisible && settingsVisible) {
+    settingsVisible = false;
+    stopGrayPolling();
+    document.getElementById('settings-main').style.display = 'none';
+  }
   document.getElementById('main').style.display = statsVisible ? 'none' : '';
   document.getElementById('stats-main').style.display = statsVisible ? 'flex' : 'none';
   if (statsVisible) loadStats();
@@ -1850,10 +2153,14 @@ let accountsVisible = false;
 
 function toggleAccounts() {
   accountsVisible = !accountsVisible;
-  // Hide stats if open
   if (accountsVisible && statsVisible) {
     statsVisible = false;
     document.getElementById('stats-main').style.display = 'none';
+  }
+  if (accountsVisible && settingsVisible) {
+    settingsVisible = false;
+    stopGrayPolling();
+    document.getElementById('settings-main').style.display = 'none';
   }
   document.getElementById('main').style.display = accountsVisible ? 'none' : '';
   document.getElementById('accounts-main').style.display = accountsVisible ? 'flex' : 'none';

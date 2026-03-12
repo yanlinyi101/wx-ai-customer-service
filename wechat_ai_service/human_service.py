@@ -32,6 +32,9 @@ _enter_human_ts: dict[str, float] = {} # openid → 进入人工模式时间戳
 _first_replied: set[str] = set()       # 已被首次回复的 openid 集合
 _response_time: dict[str, float] = {}  # openid → 首次应答时长（秒）
 
+# ─── 会话认领追踪 ────────────────────────────────────────────────────────────
+_claimed_by: dict[str, str] = {}   # openid → agent_name（已认领的客服）
+
 
 # ─── 公共 API ──────────────────────────────────────────────────────────────────
 
@@ -54,7 +57,10 @@ async def exit_human_mode(openid: str) -> None:
     _human_queue.pop(openid, None)
     _pre_history.pop(openid, None)
     _last_activity.pop(openid, None)
+    clear_claim(openid)
     clear_session_tracking(openid)
+    from gray_service import clear as gray_clear
+    gray_clear(openid)
     logger.debug(f"[human_service] 退出人工模式 openid={openid[:8]}")
 
 
@@ -112,6 +118,7 @@ async def get_all_sessions() -> dict[str, dict]:
         oid: {
             "messages": list(_human_queue[oid]),
             "pre_history": list(_pre_history.get(oid, [])),
+            "claimed_by": _claimed_by.get(oid, ""),
         }
         for oid in _human_mode
     }
@@ -154,3 +161,23 @@ def clear_session_tracking(openid: str) -> None:
     _enter_human_ts.pop(openid, None)
     _first_replied.discard(openid)
     _response_time.pop(openid, None)
+
+
+# ─── 会话认领 API ──────────────────────────────────────────────────────────────
+
+def claim_session(openid: str, agent_name: str) -> bool:
+    """尝试认领会话；已被他人认领则返回 False"""
+    if openid in _claimed_by and _claimed_by[openid] != agent_name:
+        return False
+    _claimed_by[openid] = agent_name
+    return True
+
+
+def get_claimer(openid: str) -> str:
+    """获取当前认领该会话的客服名，未认领返回空串"""
+    return _claimed_by.get(openid, "")
+
+
+def clear_claim(openid: str) -> None:
+    """清除会话认领"""
+    _claimed_by.pop(openid, None)

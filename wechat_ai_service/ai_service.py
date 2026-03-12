@@ -192,4 +192,5 @@ async def get_ai_reply(openid: str, user_message: str) -> tuple[str, list[str]]:
     reason = check_escalation(openid, user_message, top_score)
     if reason:
         reply = reply + "\n\n" + _ESCALATION_HINTS[reason]
+        image_urls = []  # 不确定时不发图片，避免发送错误图片
     return reply, image_urls
