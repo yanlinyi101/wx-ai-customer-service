@@ -865,6 +865,7 @@ body {
   <span id="status-text">未连接</span>
   <span style="flex:1"></span>
   <span id="agent-name-display" style="font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text-2);margin-right:8px;"></span>
+  <button id="status-toggle-btn" onclick="toggleAgentStatus()" style="font-size:12px;padding:4px 12px;border-radius:var(--r-sm);border:1px solid var(--border);cursor:pointer;margin-right:6px;font-weight:500;"></button>
   <button onclick="toggleStats()" style="font-size:12px;padding:4px 12px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text-2);cursor:pointer;margin-right:6px;">统计</button>
   <button onclick="toggleAccounts()" style="font-size:12px;padding:4px 12px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text-2);cursor:pointer;margin-right:6px;">账号</button>
   <div style="position:relative;display:inline-block;margin-right:6px;">
@@ -996,6 +997,7 @@ body {
 let scfUrl = '';
 let token = '';
 let agentName = '';
+let agentOnline = false;
 let statsVisible = false;
 let currentOpenid = null;
 let sessions = {};          // openid -> 实时会话数据（WS/HTTP轮询）
@@ -1015,6 +1017,54 @@ let ws = null;
 let wsReconnectTimer = null;
 let wsReconnectDelay = 3000; // 指数退避起始值
 let httpFallbackTimer = null;
+
+// ── 在线状态 ──────────────────────────────────────────────────────────────────
+function updateStatusBtn() {
+  const btn = document.getElementById('status-toggle-btn');
+  if (!btn) return;
+  if (agentOnline) {
+    btn.textContent = '● 在线';
+    btn.style.background = 'rgba(34,197,94,0.15)';
+    btn.style.color = '#22c55e';
+    btn.style.borderColor = 'rgba(34,197,94,0.3)';
+  } else {
+    btn.textContent = '○ 离线';
+    btn.style.background = 'var(--bg-elevated)';
+    btn.style.color = 'var(--text-3)';
+    btn.style.borderColor = 'var(--border)';
+  }
+}
+
+async function toggleAgentStatus() {
+  const newOnline = !agentOnline;
+  try {
+    const res = await fetch(`${scfUrl}/admin/agents/${encodeURIComponent(agentName)}/status?token=${encodeURIComponent(token)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ online: newOnline }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      agentOnline = newOnline;
+      updateStatusBtn();
+      showToast(agentOnline ? '已切换为在线' : '已切换为离线');
+    } else {
+      showToast('状态切换失败：' + (data.error || ''));
+    }
+  } catch(e) { showToast('网络错误'); }
+}
+
+async function fetchMyStatus() {
+  try {
+    const res = await fetch(`${scfUrl}/admin/agents?token=${encodeURIComponent(token)}`, { signal: AbortSignal.timeout(5000) });
+    const data = await res.json();
+    if (data.ok) {
+      const me = (data.agents || []).find(a => a.username === agentName);
+      agentOnline = me ? !!me.online : false;
+      updateStatusBtn();
+    }
+  } catch(e) {}
+}
 
 // ── 初始化 ────────────────────────────────────────────────────────────────────
 window.onload = function() {
@@ -1089,6 +1139,7 @@ function enterApp() {
   if ('Notification' in window && Notification.permission === 'default') {
     Notification.requestPermission();
   }
+  fetchMyStatus();
   loadSessions();
   connectWS();
   document.addEventListener('visibilitychange', () => {
@@ -1177,7 +1228,7 @@ function handleSessionsData(sessionsArr) {
   for (const oid of Object.keys(newSessions)) {
     if (!knownOpenids.has(oid)) newOids.push(oid);
   }
-  if (newOids.length > 0) {
+  if (newOids.length > 0 && agentOnline) {
     showToast('有新的人工服务请求！');
     document.title = '【新消息】客服管理后台';
     setTimeout(() => { document.title = '客服管理后台'; }, 5000);
@@ -1828,13 +1879,16 @@ function renderAgentsList(agents) {
     return;
   }
   const secs = v => v != null ? Math.round(v) + 's' : '—';
-  const thead = `<thead><tr>${['用户名','角色','会话数','接待用户','平均应答','操作'].map(h =>
+  const thead = `<thead><tr>${['用户名','角色','状态','会话数','接待用户','平均应答','操作'].map(h =>
     `<th style="padding:10px 16px;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-3);letter-spacing:0.08em;text-transform:uppercase;text-align:left;border-bottom:1px solid var(--border);white-space:nowrap;">${h}</th>`
   ).join('')}</tr></thead>`;
   const tbody = agents.map(a => `<tr>
     <td style="padding:10px 16px;font-size:13px;font-weight:500;color:var(--text-1);border-bottom:1px solid var(--border);">${escHtml(a.username)}</td>
     <td style="padding:10px 16px;font-size:12px;border-bottom:1px solid var(--border);">
       <span style="padding:2px 8px;border-radius:4px;font-family:'JetBrains Mono',monospace;font-size:10px;${a.is_admin ? 'background:rgba(59,130,246,0.15);color:var(--blue-bright);' : 'background:var(--bg-elevated);color:var(--text-3);'}">${a.is_admin ? '管理员' : '客服'}</span>
+    </td>
+    <td style="padding:10px 16px;font-size:12px;border-bottom:1px solid var(--border);">
+      <span style="padding:2px 8px;border-radius:4px;font-size:10px;font-family:'JetBrains Mono',monospace;${a.online ? 'background:rgba(34,197,94,0.15);color:#22c55e;' : 'background:var(--bg-elevated);color:var(--text-3);'}">${a.online ? '● 在线' : '○ 离线'}</span>
     </td>
     <td style="padding:10px 16px;font-size:13px;color:var(--text-2);border-bottom:1px solid var(--border);">${a.sessions}</td>
     <td style="padding:10px 16px;font-size:13px;color:var(--text-2);border-bottom:1px solid var(--border);">${a.unique_users}</td>
