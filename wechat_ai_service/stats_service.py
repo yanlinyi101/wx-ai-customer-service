@@ -177,6 +177,124 @@ def get_stats() -> dict:
     }
 
 
+def get_agent_served_openids(agent_name: str) -> list:
+    """Return list of openids this agent has served (from stats.json agents data)."""
+    with _lock:
+        data = _load_sync()
+        return list(data.get("agents", {}).get(agent_name, {}).get("openids", []))
+
+
+def compute_stats_for_range(log_dir: str, start_ts: float, end_ts: float) -> dict:
+    """Scan all log files, include only human_ sessions with start_ts in [start_ts, end_ts]."""
+    log_path = pathlib.Path(log_dir)
+    if not log_path.exists():
+        return {
+            "overall": {
+                "total_sessions": 0, "total_users": 0, "responded_users": 0,
+                "avg_response_time": None, "effective_rate": None, "within_3min_rate": None,
+            },
+            "agents": {},
+        }
+
+    all_openids: list = []
+    responded_openids: list = []
+    total_sessions = 0
+    total_response_time = 0.0
+    responded_count = 0
+    within_3min = 0
+    agents: dict = {}
+
+    for file in log_path.glob("*.json"):
+        try:
+            with open(file, "r", encoding="utf-8") as f:
+                user_data = json.load(f)
+        except Exception:
+            continue
+
+        openid = user_data.get("openid", file.stem)
+
+        for session in user_data.get("sessions", []):
+            if not session.get("session_id", "").startswith("human_"):
+                continue
+            s_start_ts = session.get("start_ts")
+            if s_start_ts is None or not (start_ts <= s_start_ts <= end_ts):
+                continue
+
+            log = session.get("log", [])
+            user_msgs = sum(1 for m in log if m.get("role") == "user")
+            agent_msgs = sum(1 for m in log if m.get("role") == "agent")
+
+            agent_name = ""
+            for m in log:
+                if m.get("role") == "agent" and m.get("agent_name"):
+                    agent_name = m["agent_name"]
+                    break
+
+            response_time = None
+            if s_start_ts:
+                for m in log:
+                    if m.get("role") == "agent":
+                        response_time = m["ts"] - s_start_ts
+                        break
+
+            total_sessions += 1
+            if openid not in all_openids:
+                all_openids.append(openid)
+            if agent_msgs > 0 and openid not in responded_openids:
+                responded_openids.append(openid)
+            if response_time is not None:
+                total_response_time += response_time
+                responded_count += 1
+                if response_time <= 180:
+                    within_3min += 1
+
+            if agent_name:
+                if agent_name not in agents:
+                    agents[agent_name] = {
+                        "sessions": 0, "openids": [], "user_messages": 0,
+                        "agent_messages": 0, "total_response_time": 0.0, "responded_count": 0,
+                    }
+                ag = agents[agent_name]
+                ag["sessions"] += 1
+                if openid not in ag["openids"]:
+                    ag["openids"].append(openid)
+                ag["user_messages"] += user_msgs
+                ag["agent_messages"] += agent_msgs
+                if response_time is not None:
+                    ag["total_response_time"] += response_time
+                    ag["responded_count"] += 1
+
+    total_users = len(all_openids)
+    responded_users = len(responded_openids)
+    avg_rt = (total_response_time / responded_count) if responded_count > 0 else None
+    effective_rate = (responded_users / total_users) if total_users > 0 else None
+    within_3min_rate = (within_3min / total_sessions) if total_sessions > 0 else None
+
+    agents_out = {}
+    for name, ag in agents.items():
+        ag_rc = ag.get("responded_count", 0)
+        ag_rt = ag.get("total_response_time", 0.0)
+        agents_out[name] = {
+            "sessions": ag.get("sessions", 0),
+            "unique_users": len(ag.get("openids", [])),
+            "user_messages": ag.get("user_messages", 0),
+            "agent_messages": ag.get("agent_messages", 0),
+            "avg_response_time": (ag_rt / ag_rc) if ag_rc > 0 else None,
+        }
+
+    return {
+        "overall": {
+            "total_sessions": total_sessions,
+            "total_users": total_users,
+            "responded_users": responded_users,
+            "avg_response_time": avg_rt,
+            "effective_rate": effective_rate,
+            "within_3min_rate": within_3min_rate,
+        },
+        "agents": agents_out,
+    }
+
+
 def rebuild_from_logs(log_dir: str) -> None:
     """扫描全量日志重建统计（管理员触发，阻塞操作）"""
     log_path = pathlib.Path(log_dir)

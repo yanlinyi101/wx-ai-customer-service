@@ -390,6 +390,23 @@ body {
   color: var(--text-3);
   letter-spacing: 0.02em;
 }
+.history-user-card .user-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.star-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  color: var(--text-4);
+  line-height: 1;
+  padding: 0 2px;
+  flex-shrink: 0;
+}
+.star-btn.starred { color: #f5a623; }
+.history-user-card.pinned { border-left: 3px solid #f5a623; }
 
 /* ═══════════════════════════════════════════
    Right Chat Panel
@@ -871,7 +888,7 @@ body {
   <span id="agent-name-display" style="font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text-2);margin-right:8px;"></span>
   <button id="status-toggle-btn" onclick="toggleAgentStatus()" style="font-size:12px;padding:4px 12px;border-radius:var(--r-sm);border:1px solid var(--border);cursor:pointer;margin-right:6px;font-weight:500;"></button>
   <button id="stats-btn" onclick="toggleStats()" style="font-size:12px;padding:4px 12px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text-2);cursor:pointer;margin-right:6px;">统计</button>
-  <button onclick="toggleAccounts()" style="font-size:12px;padding:4px 12px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text-2);cursor:pointer;margin-right:6px;">账号</button>
+  <button id="accounts-btn" onclick="toggleAccounts()" style="font-size:12px;padding:4px 12px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text-2);cursor:pointer;margin-right:6px;">账号</button>
   <button onclick="toggleSettings()" id="settings-btn" style="font-size:12px;padding:4px 12px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text-2);cursor:pointer;margin-right:6px;">设置</button>
   <button onclick="doLogout()" style="font-size:12px;padding:4px 12px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text-2);cursor:pointer;">退出</button>
 </div>
@@ -931,6 +948,22 @@ body {
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;">
       <h2 style="font-size:17px;font-weight:600;color:var(--text-1);letter-spacing:-0.01em;">数据统计</h2>
       <button onclick="rebuildStats()" style="font-size:12px;padding:6px 16px;background:var(--bg-elevated);border:1px solid var(--border-mid);border-radius:var(--r-sm);color:var(--text-2);cursor:pointer;font-family:'JetBrains Mono',monospace;letter-spacing:0.03em;">重新计算</button>
+    </div>
+    <!-- 日期筛选栏 -->
+    <div id="stats-filter-bar" style="display:flex;align-items:center;gap:10px;margin-bottom:20px;flex-wrap:wrap;">
+      <select id="stats-period-select" onchange="onStatsPeriodChange()" style="background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text-2);padding:6px 12px;font-size:12px;font-family:'JetBrains Mono',monospace;cursor:pointer;outline:none;">
+        <option value="all">全部时间</option>
+        <option value="today">今日</option>
+        <option value="7d">近7天</option>
+        <option value="30d">近30天</option>
+        <option value="custom">自定义</option>
+      </select>
+      <span id="stats-custom-range" style="display:none;align-items:center;gap:6px;">
+        <input type="date" id="stats-start-date" style="background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text-2);padding:5px 10px;font-size:12px;font-family:'JetBrains Mono',monospace;outline:none;">
+        <span style="color:var(--text-3);">—</span>
+        <input type="date" id="stats-end-date" style="background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text-2);padding:5px 10px;font-size:12px;font-family:'JetBrains Mono',monospace;outline:none;">
+      </span>
+      <button onclick="loadStats()" style="padding:6px 16px;background:var(--blue-dim);border:1px solid var(--border-blue);border-radius:var(--r-sm);color:var(--blue-bright);font-size:12px;font-family:'JetBrains Mono',monospace;cursor:pointer;">查询</button>
     </div>
     <!-- 概况卡片 -->
     <div id="stats-cards" style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:24px;"></div>
@@ -1002,6 +1035,7 @@ body {
     </div>
 
     <!-- 灰度测试 -->
+    <div id="gray-section-wrap">
     <div style="background:var(--bg-panel);border:1px solid var(--border);border-radius:var(--r);padding:20px 24px;">
       <!-- 标题行 -->
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
@@ -1060,6 +1094,7 @@ body {
         </button>
       </div>
     </div>
+    </div><!-- /#gray-section-wrap -->
   </div>
 </div>
 
@@ -1083,6 +1118,7 @@ let _loadingHistory = false;
 // 历史记录 Tab 状态
 let currentTab = 'waiting';   // 'waiting' | 'history'
 let historyUsers = [];        // [{openid, nickname, last_ts, msg_count}]
+let cachedHistoryUsers = [];  // 用于星标重渲染时的缓存
 let historyOpenid = null;     // 历史 Tab 当前选中的 openid
 let historySearch = '';       // 搜索过滤词
 
@@ -1218,6 +1254,9 @@ function enterApp() {
   const agentDisplay = document.getElementById('agent-name-display');
   agentDisplay.textContent = agentName ? `👤 ${agentName}` : '';
   document.getElementById('stats-btn').style.display = isAdmin ? '' : 'none';
+  document.getElementById('accounts-btn').style.display = isAdmin ? '' : 'none';
+  const grayWrap = document.getElementById('gray-section-wrap');
+  if (grayWrap) grayWrap.style.display = isAdmin ? '' : 'none';
   if ('Notification' in window && Notification.permission === 'default') {
     Notification.requestPermission();
   }
@@ -1426,10 +1465,13 @@ function renderSessionList(newOids) {
     empty.style.display = '';
     return;
   }
-  empty.style.display = 'none';
   list.innerHTML = '';
+  let rendered = 0;
   for (const oid of keys) {
     const s = sessions[oid];
+    const claimedBy = s.claimed_by || '';
+    // 已被其他客服接入的会话，不显示在当前账号的等待列表中
+    if (claimedBy && claimedBy !== agentName) continue;
     const isNew = newOids && newOids.includes(oid);
     const allMsgs = s.messages || [];
     const lastMsgObj = allMsgs.length > 0 ? allMsgs[allMsgs.length - 1] : null;
@@ -1438,7 +1480,6 @@ function renderSessionList(newOids) {
       : '（无消息）';
     const div = document.createElement('div');
     div.className = 'session-item' + (oid === currentOpenid ? ' active' : '') + (isNew ? ' new-session' : '');
-    const claimedBy = s.claimed_by || '';
     div.innerHTML = `
       <div class="session-id">
         <span>${escHtml(s.nickname || (s.short + '...'))}</span>
@@ -1449,6 +1490,13 @@ function renderSessionList(newOids) {
     `;
     div.onclick = () => confirmJoinSession(oid);
     list.appendChild(div);
+    rendered++;
+  }
+  if (rendered === 0) {
+    list.appendChild(empty);
+    empty.style.display = '';
+  } else {
+    empty.style.display = 'none';
   }
 }
 
@@ -1736,6 +1784,7 @@ function updateGrayPreview(val) {
 }
 
 async function saveGrayConfigPanel() {
+  if (!isAdmin) return;
   const enabled  = document.getElementById('gray-enabled-panel').checked;
   const ai_ratio = parseInt(document.getElementById('gray-ratio-panel').value) / 100;
   try {
@@ -1971,59 +2020,88 @@ function switchTab(tab) {
   }
 }
 
+// ── 星标用户 ─────────────────────────────────────────────────────────────────
+function _starKey() { return 'stars_' + (localStorage.getItem('agent_name') || 'admin'); }
+function getStarredSet() { return new Set(JSON.parse(localStorage.getItem(_starKey()) || '[]')); }
+function saveStarredSet(set) { localStorage.setItem(_starKey(), JSON.stringify([...set])); }
+function toggleStar(openid, event) {
+  if (event) event.stopPropagation();
+  const s = getStarredSet();
+  s.has(openid) ? s.delete(openid) : s.add(openid);
+  saveStarredSet(s);
+  renderHistoryUserList(cachedHistoryUsers);
+}
+
 async function fetchAllUsers() {
   if (!scfUrl || !token) return;
   const list = document.getElementById('session-list');
   list.innerHTML = `<div id="empty-sessions" style="display:block">加载中...</div>`;
   try {
+    const agentParam = isAdmin ? '' : `&agent_name=${encodeURIComponent(agentName)}`;
     const res = await fetch(
-      `${scfUrl}/admin/all_users?token=${encodeURIComponent(token)}`,
+      `${scfUrl}/admin/all_users?token=${encodeURIComponent(token)}${agentParam}`,
       { signal: AbortSignal.timeout(20000) }
     );
     if (res.ok) {
       const data = await res.json();
       if (data.ok) {
         historyUsers = data.users || [];
-        renderHistoryUserList();
+        cachedHistoryUsers = historyUsers;
+        renderHistoryUserList(cachedHistoryUsers);
       }
     } else {
       showToast('加载历史用户失败');
-      renderHistoryUserList();
+      renderHistoryUserList(cachedHistoryUsers);
     }
   } catch(e) {
     showToast('加载历史用户失败');
-    renderHistoryUserList();
+    renderHistoryUserList(cachedHistoryUsers);
   }
 }
 
 function filterHistoryUsers(query) {
   historySearch = query.toLowerCase();
-  renderHistoryUserList();
+  renderHistoryUserList(cachedHistoryUsers);
 }
 
-function renderHistoryUserList() {
+function renderHistoryUserList(users) {
+  if (users !== undefined) cachedHistoryUsers = users;
   const list = document.getElementById('session-list');
+  const starred = getStarredSet();
 
-  const filtered = historyUsers.filter(u => {
+  const source = cachedHistoryUsers.length > 0 ? cachedHistoryUsers : historyUsers;
+  const filtered = source.filter(u => {
     if (!historySearch) return true;
     const name = (u.nickname || u.openid).toLowerCase();
     return name.includes(historySearch);
   });
 
+  // Sort: starred first, then by last_ts desc
+  filtered.sort((a, b) => {
+    const aS = starred.has(a.openid) ? 1 : 0;
+    const bS = starred.has(b.openid) ? 1 : 0;
+    if (aS !== bS) return bS - aS;
+    return (b.last_ts || 0) - (a.last_ts || 0);
+  });
+
   if (filtered.length === 0) {
-    const msg = historyUsers.length === 0 ? '— 暂无历史记录 —' : '— 没有匹配的用户 —';
+    const msg = source.length === 0 ? '— 暂无历史记录 —' : '— 没有匹配的用户 —';
     list.innerHTML = `<div id="empty-sessions">${msg}</div>`;
     return;
   }
 
   list.innerHTML = '';
   for (const u of filtered) {
+    const isStarred = starred.has(u.openid);
     const div = document.createElement('div');
-    div.className = 'history-user-card' + (u.openid === historyOpenid ? ' active' : '');
+    div.className = 'history-user-card' + (u.openid === historyOpenid ? ' active' : '') + (isStarred ? ' pinned' : '');
     const name = u.nickname || (u.openid.slice(0, 8) + '...');
     const lastTime = u.last_ts > 0 ? formatDate(u.last_ts) : '无记录';
     div.innerHTML = `
-      <div class="user-name">${escHtml(name)}</div>
+      <div class="user-top">
+        <div class="user-name">${escHtml(name)}</div>
+        <button class="star-btn${isStarred ? ' starred' : ''}" onclick="toggleStar('${escHtml(u.openid)}', event)" title="${isStarred ? '取消星标' : '星标'}">${isStarred ? '★' : '☆'}</button>
+      </div>
       <div class="user-meta">${u.msg_count} 条 · ${lastTime}</div>
     `;
     div.onclick = () => selectHistoryUser(u.openid, u.nickname);
@@ -2085,10 +2163,44 @@ function toggleStats() {
   if (statsVisible) loadStats();
 }
 
+function onStatsPeriodChange() {
+  const period = document.getElementById('stats-period-select').value;
+  const customRange = document.getElementById('stats-custom-range');
+  customRange.style.display = period === 'custom' ? 'flex' : 'none';
+  if (period !== 'custom') {
+    const today = new Date();
+    const fmt = d => d.toISOString().slice(0, 10);
+    const todayStr = fmt(today);
+    if (period === 'today') {
+      document.getElementById('stats-start-date').value = todayStr;
+      document.getElementById('stats-end-date').value = todayStr;
+    } else if (period === '7d') {
+      const d = new Date(today); d.setDate(d.getDate() - 6);
+      document.getElementById('stats-start-date').value = fmt(d);
+      document.getElementById('stats-end-date').value = todayStr;
+    } else if (period === '30d') {
+      const d = new Date(today); d.setDate(d.getDate() - 29);
+      document.getElementById('stats-start-date').value = fmt(d);
+      document.getElementById('stats-end-date').value = todayStr;
+    } else {
+      document.getElementById('stats-start-date').value = '';
+      document.getElementById('stats-end-date').value = '';
+    }
+    if (period !== 'all') loadStats();
+  }
+}
+
 async function loadStats() {
   if (!scfUrl || !token) return;
   try {
-    const res = await fetch(`${scfUrl}/admin/stats?token=${encodeURIComponent(token)}`, { signal: AbortSignal.timeout(10000) });
+    const period = document.getElementById('stats-period-select')?.value || 'all';
+    let url = `${scfUrl}/admin/stats?token=${encodeURIComponent(token)}`;
+    if (period !== 'all') {
+      const sd = document.getElementById('stats-start-date')?.value;
+      const ed = document.getElementById('stats-end-date')?.value;
+      if (sd && ed) url += `&start_date=${encodeURIComponent(sd)}&end_date=${encodeURIComponent(ed)}`;
+    }
+    const res = await fetch(url, { signal: AbortSignal.timeout(30000) });
     if (!res.ok) { showToast('加载统计失败'); return; }
     const data = await res.json();
     if (data.ok) renderStats(data);
@@ -2152,6 +2264,7 @@ async function rebuildStats() {
 let accountsVisible = false;
 
 function toggleAccounts() {
+  if (!isAdmin) return;
   accountsVisible = !accountsVisible;
   if (accountsVisible && statsVisible) {
     statsVisible = false;
