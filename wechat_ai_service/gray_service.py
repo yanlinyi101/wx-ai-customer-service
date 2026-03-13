@@ -74,6 +74,12 @@ def update_config(enabled: bool, ai_ratio: float) -> None:
     logger.info(f"[GRAY] 配置已更新 enabled={_enabled} ai_ratio={_ai_ratio}")
 
 
+def force_ai(openid: str) -> None:
+    """强制将用户锁定为 AI 分组（无人接入超时后调用，避免重复进入人工等待）"""
+    _assignments[openid] = "ai"
+    logger.debug(f"[GRAY] {openid[:8]} 强制锁定 → ai")
+
+
 def get_config() -> dict:
     """返回当前灰度配置"""
     return {"enabled": _enabled, "ai_ratio": _ai_ratio}

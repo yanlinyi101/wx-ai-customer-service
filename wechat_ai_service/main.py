@@ -138,6 +138,9 @@ async def _auto_close_idle_sessions() -> None:
                     "", openid, user_msgs, 0, None,
                 ))
                 await exit_human_mode(openid)
+                # 灰度测试：超时转回AI后，锁定为AI分组，避免下次消息再次进入人工循环
+                from gray_service import force_ai as gray_force_ai
+                gray_force_ai(openid)
                 await send_text_message(
                     openid,
                     "抱歉，当前客服繁忙暂时无法接入，已为您转回智能助手处理。\n"
@@ -633,8 +636,9 @@ async def admin_reply_image(
 
 
 @app.get("/admin/all_users")
-async def admin_all_users(token: str = Query("")):
-    """返回所有用户基础信息（昵称、最后消息时间、消息总数），按最近活跃降序"""
+async def admin_all_users(token: str = Query(""), agent_name: str = Query("")):
+    """返回所有用户基础信息（昵称、最后消息时间、消息总数），按最近活跃降序。
+    非管理员传入 agent_name 时只返回该客服接待过的用户。"""
     if not _check_admin(token):
         return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
     try:
@@ -642,6 +646,13 @@ async def admin_all_users(token: str = Query("")):
     except Exception as e:
         logger.error(f"[admin_all_users] 获取失败: {e}")
         return JSONResponse({"ok": False, "error": "获取失败"}, status_code=500)
+
+    if agent_name:
+        agents = await asyncio.to_thread(load_agents)
+        agent_rec = next((a for a in agents if a.get("username") == agent_name), None)
+        if agent_rec and not agent_rec.get("is_admin", False):
+            served = set(stats_service.get_agent_served_openids(agent_name))
+            users = [u for u in users if u["openid"] in served]
 
     async def fill_nickname(user: dict) -> dict:
         if not user["nickname"]:
@@ -675,12 +686,19 @@ async def admin_history(openid: str, token: str = Query("")):
 
 
 @app.get("/admin/stats")
-async def admin_stats(token: str = Query("")):
-    """返回整体和客服维度的统计数据"""
+async def admin_stats(token: str = Query(""), start_date: str = Query(""), end_date: str = Query("")):
+    """返回整体和客服维度的统计数据，可按日期范围过滤"""
     if not _check_admin(token):
         return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
     try:
-        data = await asyncio.to_thread(stats_service.get_stats)
+        if start_date and end_date:
+            import datetime
+            start_ts = datetime.datetime.strptime(start_date, "%Y-%m-%d").timestamp()
+            end_dt = datetime.datetime.strptime(end_date, "%Y-%m-%d")
+            end_ts = (end_dt + datetime.timedelta(days=1)).timestamp()
+            data = await asyncio.to_thread(stats_service.compute_stats_for_range, LOG_DIR, start_ts, end_ts)
+        else:
+            data = await asyncio.to_thread(stats_service.get_stats)
         return {"ok": True, **data}
     except Exception as e:
         logger.error(f"[admin_stats] 获取统计失败: {e}")
@@ -880,7 +898,7 @@ async def _do_enter_human(openid: str, user_text: str) -> None:
     await send_text_message(
         openid,
         "好的，正在为您转接人工客服，请稍候。\n"
-        "如暂无客服在线，我们会在工作时间（9:00-18:00）尽快联系您。",
+        "如暂无客服在线，我们会在工作时间（9:00-22:00）尽快联系您。",
     )
     if ADMIN_OPENID:
         await send_text_message(
@@ -987,10 +1005,25 @@ async def _handle_text(openid: str, text: str) -> None:
 
 async def _send_welcome(openid: str) -> None:
     """用户进入客服对话时发送欢迎语"""
-    await send_text_message(
-        openid,
-        "您好！我是 AI 智能客服，很高兴为您服务 😊\n请问有什么可以帮助您的？"
-    )
+    from gray_service import get_or_assign, get_config
+    cfg = get_config()
+    if cfg.get("enabled") and get_or_assign(openid) == "human":
+        import datetime
+        now_hour = datetime.datetime.now().hour
+        in_work_hours = 9 <= now_hour < 22
+        if in_work_hours:
+            msg = "您好！感谢您的联系，正在为您转接人工客服，请稍候。"
+        else:
+            msg = (
+                "您好！感谢您的联系，正在为您转接人工客服，请稍候。\n"
+                "如暂无客服在线，我们会在工作时间（9:00-22:00）尽快为您处理。"
+            )
+        await send_text_message(openid, msg)
+    else:
+        await send_text_message(
+            openid,
+            "您好！我是 AI 智能客服，很高兴为您服务 😊\n请问有什么可以帮助您的？"
+        )
 
 
 # ──────────────────────────────────────────
