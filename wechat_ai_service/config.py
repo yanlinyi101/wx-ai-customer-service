@@ -171,3 +171,30 @@ def save_agents(agents: list[dict]) -> None:
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(agents, f, ensure_ascii=False, indent=2)
         tmp.replace(AGENTS_FILE)
+
+
+NOTES_FILE = pathlib.Path(__file__).parent / "customer_notes.json"
+
+_notes_lock = _threading.Lock()
+
+
+def load_notes() -> dict:
+    """加载客户备注字典"""
+    with _notes_lock:
+        if NOTES_FILE.exists():
+            try:
+                with open(NOTES_FILE, encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+    return {}
+
+
+def save_notes(notes: dict) -> None:
+    """保存客户备注（原子写入）"""
+    with _notes_lock:
+        NOTES_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = NOTES_FILE.with_suffix(".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(notes, f, ensure_ascii=False, indent=2)
+        tmp.replace(NOTES_FILE)
