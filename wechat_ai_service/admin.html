@@ -841,6 +841,245 @@ body {
   0%, 100% { opacity: 1; }
   50%       { opacity: 0.25; }
 }
+
+/* ═══════════════════════════════════════════
+   Note Bar
+═══════════════════════════════════════════ */
+#note-bar {
+  padding: 6px 20px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  min-height: 32px;
+}
+#note-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--text-3);
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  padding-top: 3px;
+  flex-shrink: 0;
+  text-transform: uppercase;
+}
+#note-display {
+  font-size: 12px;
+  color: var(--text-3);
+  cursor: pointer;
+  flex: 1;
+  min-width: 0;
+  padding-top: 2px;
+  transition: color var(--fast) var(--ease);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#note-display:hover { color: var(--text-2); }
+#note-display.has-note { color: var(--text-2); }
+#note-edit {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  min-width: 200px;
+}
+#note-input {
+  flex: 1;
+  min-width: 160px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-blue);
+  border-radius: var(--r-xs);
+  color: var(--text-1);
+  padding: 4px 8px;
+  font-size: 12px;
+  font-family: 'Noto Sans SC', sans-serif;
+  resize: none;
+  outline: none;
+  line-height: 1.5;
+  height: 44px;
+}
+#note-counter {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--text-4);
+  white-space: nowrap;
+}
+#note-save-btn {
+  font-size: 11px; padding: 4px 12px; border-radius: var(--r-xs);
+  cursor: pointer; white-space: nowrap;
+  background: var(--blue); color: #fff; border: none;
+}
+#note-cancel-btn {
+  font-size: 11px; padding: 4px 10px; border-radius: var(--r-xs);
+  cursor: pointer; white-space: nowrap;
+  background: var(--bg-elevated); color: var(--text-2); border: 1px solid var(--border);
+}
+#note-meta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--text-4);
+  white-space: nowrap;
+  padding-top: 3px;
+  flex-shrink: 0;
+}
+
+/* ═══════════════════════════════════════════
+   Quick Reply
+═══════════════════════════════════════════ */
+#quick-reply-wrapper {
+  position: relative;
+  flex-shrink: 0;
+  display: flex;
+  align-items: flex-end;
+  padding-bottom: 9px;
+}
+#quick-reply-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 17px;
+  opacity: 0.4;
+  padding: 0;
+  transition: opacity var(--fast) var(--ease);
+  user-select: none;
+}
+#quick-reply-btn:hover { opacity: 0.85; }
+#quick-reply-panel {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  min-width: 260px;
+  max-width: 340px;
+  max-height: 300px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--r);
+  box-shadow: 0 8px 28px rgba(0,0,0,0.45);
+  overflow: hidden;
+  z-index: 500;
+}
+#quick-reply-list { overflow-y: auto; flex: 1; }
+.quick-reply-item {
+  padding: 9px 14px;
+  font-size: 13px;
+  color: var(--text-2);
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background var(--fast) var(--ease), color var(--fast) var(--ease);
+}
+.quick-reply-item:hover { background: var(--bg-elevated); color: var(--text-1); }
+#quick-reply-footer {
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+#quick-reply-footer button {
+  width: 100%;
+  padding: 6px;
+  background: var(--blue-dim);
+  border: 1px solid var(--border-blue);
+  border-radius: var(--r-xs);
+  color: var(--blue-bright);
+  font-size: 12px;
+  cursor: pointer;
+  font-family: 'Noto Sans SC', sans-serif;
+}
+#quick-reply-footer button:hover { background: rgba(59,130,246,0.18); }
+
+/* Quick manage modal */
+#quick-manage-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  z-index: 9000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#quick-manage-content {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--r-lg);
+  padding: 24px 28px;
+  width: 400px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+}
+#quick-manage-content h3 { font-size: 14px; font-weight: 600; color: var(--text-1); margin: 0; }
+#quick-items-list {
+  overflow-y: auto;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 280px;
+  min-height: 40px;
+}
+.quick-manage-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xs);
+  padding: 7px 10px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.quick-manage-item span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.quick-manage-item button {
+  background: none; border: none; cursor: pointer;
+  color: var(--red); font-size: 14px; flex-shrink: 0;
+  opacity: 0.7; transition: opacity var(--fast) var(--ease);
+}
+.quick-manage-item button:hover { opacity: 1; }
+#quick-add-row { display: flex; gap: 8px; }
+#quick-new-input {
+  flex: 1;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xs);
+  color: var(--text-1);
+  padding: 7px 10px;
+  font-size: 13px;
+  font-family: 'Noto Sans SC', sans-serif;
+  outline: none;
+  transition: border-color var(--fast) var(--ease);
+}
+#quick-new-input:focus { border-color: var(--border-blue); }
+#quick-add-row button {
+  padding: 7px 16px;
+  background: var(--blue);
+  border: none;
+  border-radius: var(--r-xs);
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+#quick-manage-done-btn {
+  padding: 9px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text-2);
+  font-size: 13px;
+  cursor: pointer;
+  align-self: flex-end;
+}
 </style>
 </head>
 <body>
@@ -908,6 +1147,18 @@ body {
     <div id="history-search-bar" style="display:none">
       <input id="history-search-input" type="text" placeholder="搜索用户昵称..." oninput="filterHistoryUsers(this.value)" />
     </div>
+    <!-- 内容搜索 & 日期搜索面板 -->
+    <div id="log-search-panel" style="display:none; padding:10px 14px; border-bottom:1px solid var(--border); background:var(--bg-panel)">
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+        <input id="log-search-q" placeholder="消息关键词（可为空）" style="flex:1;min-width:100px;padding:5px 8px;border:1px solid var(--border);border-radius:5px;background:var(--bg-elevated);color:var(--text-1);font-size:12px">
+        <input id="log-search-from" type="date" style="padding:5px 6px;border:1px solid var(--border);border-radius:5px;background:var(--bg-elevated);color:var(--text-1);font-size:12px">
+        <span style="color:var(--text-3);font-size:12px">→</span>
+        <input id="log-search-to" type="date" style="padding:5px 6px;border:1px solid var(--border);border-radius:5px;background:var(--bg-elevated);color:var(--text-1);font-size:12px">
+        <button onclick="runLogSearch()" style="padding:5px 14px;background:var(--teal);color:#fff;border:none;border-radius:5px;cursor:pointer;font-size:12px">搜索</button>
+      </div>
+    </div>
+    <!-- 搜索结果列表 -->
+    <div id="log-search-results" style="display:none;overflow-y:auto;flex:1"></div>
     <div id="session-list">
       <div id="empty-sessions">— 暂无等待中的用户 —</div>
     </div>
@@ -924,7 +1175,28 @@ body {
     <div id="chat-content" style="display:none; flex:1; flex-direction:column; overflow:hidden;">
       <div id="chat-header">
         <h3 id="chat-title">USER: —</h3>
+        <div id="date-jumper" style="display:none; position:relative; margin-right:6px">
+          <button id="date-jumper-btn" onclick="toggleDateJumper()"
+            style="padding:4px 10px;font-size:12px;background:var(--bg-elevated);color:var(--text-2);border:1px solid var(--border);border-radius:5px;cursor:pointer;">
+            📅 跳转日期
+          </button>
+          <div id="date-jumper-dropdown"
+            style="display:none;position:absolute;right:0;top:calc(100% + 4px);min-width:140px;max-height:280px;overflow-y:auto;background:var(--bg-panel);border:1px solid var(--border);border-radius:7px;box-shadow:0 4px 16px rgba(0,0,0,.25);z-index:999;">
+          </div>
+        </div>
         <button id="close-btn" onclick="closeSession()">结束会话</button>
+      </div>
+      <!-- 客户备注栏 -->
+      <div id="note-bar" style="display:none">
+        <span id="note-label">NOTE</span>
+        <span id="note-display" onclick="startEditNote()">— 点击添加备注</span>
+        <div id="note-edit" style="display:none">
+          <textarea id="note-input" maxlength="200" oninput="document.getElementById('note-counter').textContent=this.value.length+'/200'"></textarea>
+          <span id="note-counter">0/200</span>
+          <button id="note-save-btn" onclick="saveNote()">保存</button>
+          <button id="note-cancel-btn" onclick="cancelEditNote()">取消</button>
+        </div>
+        <span id="note-meta"></span>
       </div>
       <div id="messages"></div>
       <div id="reply-area">
@@ -932,8 +1204,27 @@ body {
           📎
           <input id="img-upload-input" type="file" accept="image/*" onchange="sendImage(this)" />
         </label>
+        <div id="quick-reply-wrapper">
+          <button id="quick-reply-btn" onclick="toggleQuickPanel()" title="常用语">💬</button>
+          <div id="quick-reply-panel" style="display:none">
+            <div id="quick-reply-list"></div>
+            <div id="quick-reply-footer">
+              <button onclick="openQuickManage()">管理常用语</button>
+            </div>
+          </div>
+        </div>
         <textarea id="reply-input" rows="3" placeholder="输入回复内容，Ctrl+Enter 发送..."></textarea>
         <button id="send-btn" onclick="sendReply()">发送</button>
+      </div>
+      <div id="initiate-area" style="display:none;padding:12px 16px;border-top:1px solid var(--border);background:var(--bg-panel)">
+        <textarea id="initiate-input" placeholder="输入消息，主动发起会话..." rows="2"
+          style="width:100%;resize:none;box-sizing:border-box;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-elevated);color:var(--text-1);font-size:13px"></textarea>
+        <div style="display:flex;justify-content:flex-end;margin-top:8px">
+          <button id="initiate-btn" onclick="initiateSession()"
+            style="padding:6px 18px;background:var(--teal);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px">
+            发起会话
+          </button>
+        </div>
       </div>
     </div>
 
@@ -1098,6 +1389,20 @@ body {
   </div>
 </div>
 
+<!-- 常用语管理弹窗 -->
+<div id="quick-manage-modal" style="display:none">
+  <div id="quick-manage-content">
+    <h3>管理常用语</h3>
+    <div id="quick-items-list"></div>
+    <div id="quick-add-row">
+      <input id="quick-new-input" maxlength="100" placeholder="输入新常用语（最多100字）"
+             onkeydown="if(event.key==='Enter')addQuickReply()" />
+      <button onclick="addQuickReply()">添加</button>
+    </div>
+    <button id="quick-manage-done-btn" onclick="closeQuickManage()">完成</button>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <script>
@@ -1109,6 +1414,7 @@ let agentOnline = false;
 let isAdmin = false;
 let statsVisible = false;
 let currentOpenid = null;
+let agentQuickReplies = [];
 let sessions = {};          // openid -> 实时会话数据（WS/HTTP轮询）
 let knownOpenids = new Set();
 let currentHistory = null;  // 当前选中用户的全量文件历史（/admin/history 返回）
@@ -1264,6 +1570,7 @@ function enterApp() {
   loadSessions();
   loadGrayConfig();
   connectWS();
+  fetchQuickReplies();
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
       loadSessions();
@@ -1507,6 +1814,7 @@ function selectSession(oid) {
   showChatPanel(true, false);
   renderSessionList([]);
   renderMessages(oid);
+  loadNote(oid);
 }
 
 function showChatPanel(show, isHistory) {
@@ -1514,15 +1822,28 @@ function showChatPanel(show, isHistory) {
   const chatContent = document.getElementById('chat-content');
   const replyArea = document.getElementById('reply-area');
   const closeBtn = document.getElementById('close-btn');
+  const initiateArea = document.getElementById('initiate-area');
+  const noteBar = document.getElementById('note-bar');
   if (show) {
     noSess.style.display = 'none';
     chatContent.style.display = 'flex';
     replyArea.style.display = isHistory ? 'none' : '';
     closeBtn.style.display = isHistory ? 'none' : '';
+    initiateArea.style.display = isHistory ? '' : 'none';
+    if (noteBar) noteBar.style.display = '';
   } else {
     noSess.style.display = 'flex';
     chatContent.style.display = 'none';
+    initiateArea.style.display = 'none';
     document.getElementById('chat-title').textContent = 'USER: —';
+    if (noteBar) {
+      noteBar.style.display = 'none';
+      cancelEditNote();
+      const nd = document.getElementById('note-display');
+      if (nd) { nd.textContent = '— 点击添加备注'; nd.classList.remove('has-note'); }
+      const nm = document.getElementById('note-meta');
+      if (nm) nm.textContent = '';
+    }
   }
 }
 
@@ -1617,7 +1938,8 @@ function appendMsgBubble(container, msg) {
   if (ts > 0) {
     const timeEl = document.createElement('div');
     timeEl.className = 'msg-time';
-    timeEl.textContent = (isAgent ? '客服 · ' : role === 'ai' ? 'AI · ' : '用户 · ') + formatTime(ts);
+    const agentLabel = isAgent ? (msg.agent_name || '客服') + ' · ' : (role === 'ai' ? 'AI · ' : '用户 · ');
+    timeEl.textContent = agentLabel + formatTime(ts);
     row.appendChild(timeEl);
   }
   container.appendChild(row);
@@ -1681,6 +2003,39 @@ async function closeSession() {
       showToast('操作失败：' + (data.error || ''));
     }
   } catch(e) {
+    showToast('网络错误，请重试');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ── 主动发起会话 ──────────────────────────────────────────────────────────────
+async function initiateSession() {
+  const input = document.getElementById('initiate-input');
+  const text = input.value.trim();
+  if (!text || !historyOpenid) return;
+  const btn = document.getElementById('initiate-btn');
+  btn.disabled = true;
+  try {
+    const res = await fetch(
+      `${scfUrl}/admin/initiate_session?token=${encodeURIComponent(token)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ openid: historyOpenid, message: text, agent_name: agentName }),
+      }
+    );
+    const data = await res.json();
+    if (data.ok) {
+      input.value = '';
+      showToast('已发起会话');
+      switchTab('waiting');
+      await loadSessions();
+      if (sessions[historyOpenid]) selectSession(historyOpenid);
+    } else {
+      showToast('发起失败：' + (data.error || ''));
+    }
+  } catch (e) {
     showToast('网络错误，请重试');
   } finally {
     btn.disabled = false;
@@ -1844,6 +2199,20 @@ document.addEventListener('keydown', function(e) {
 // 页面加载后初始化设置状态
 document.addEventListener('DOMContentLoaded', function() {
   applySendMode(sendMode);
+  document.addEventListener('click', e => {
+    // 关闭日期跳转下拉
+    const jumper = document.getElementById('date-jumper');
+    if (jumper && !jumper.contains(e.target)) {
+      const dd = document.getElementById('date-jumper-dropdown');
+      if (dd) dd.style.display = 'none';
+    }
+    // 关闭常用语浮层
+    const qw = document.getElementById('quick-reply-wrapper');
+    if (qw && !qw.contains(e.target)) {
+      const qp = document.getElementById('quick-reply-panel');
+      if (qp) qp.style.display = 'none';
+    }
+  });
 });
 
 // ── 接入确认弹窗 ──────────────────────────────────────────────────────────────
@@ -1869,6 +2238,7 @@ async function claimAndJoinSession(oid) {
       showChatPanel(true, false);
       renderSessionList([]);
       renderMessages(oid);
+      loadNote(oid);
       await fetchHistory(oid);
     } else {
       showToast(data.error || '认领失败');
@@ -2003,10 +2373,15 @@ function switchTab(tab) {
   document.getElementById('tab-history').classList.toggle('active', tab === 'history');
   document.getElementById('sidebar-header').style.display = tab === 'waiting' ? '' : 'none';
   document.getElementById('history-search-bar').style.display = tab === 'history' ? '' : 'none';
+  document.getElementById('log-search-panel').style.display = tab === 'history' ? '' : 'none';
+  document.getElementById('log-search-results').style.display = 'none';
+  document.getElementById('session-list').style.display = '';
 
   currentOpenid = null;
   currentHistory = null;
   historyOpenid = null;
+  const dj = document.getElementById('date-jumper');
+  if (dj) dj.style.display = 'none';
   showChatPanel(false);
 
   if (tab === 'waiting') {
@@ -2115,6 +2490,7 @@ function selectHistoryUser(oid, nickname) {
   currentHistory = null;
   showChatPanel(true, true);
   renderHistoryUserList();
+  loadNote(oid);
   const container = document.getElementById('messages');
   container.innerHTML = `<div style="text-align:center;color:var(--text-4);padding:48px;font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:0.04em;">加载中...</div>`;
   const displayName = nickname || (oid.slice(0, 8) + '...');
@@ -2124,14 +2500,15 @@ function selectHistoryUser(oid, nickname) {
 
 function renderHistoryMessages(oid) {
   const container = document.getElementById('messages');
-  const scrolledToBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 60;
   container.innerHTML = '';
 
   if (!currentHistory || currentHistory.length === 0) {
     container.innerHTML = `<div style="text-align:center;color:var(--text-4);padding:48px;font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:0.04em;">暂无聊天记录</div>`;
+    buildDateJumper([]);
     return;
   }
 
+  let lastDate = '';
   for (const session of currentHistory) {
     const isHuman = session.session_id.startsWith('human_');
     const sep = document.createElement('div');
@@ -2139,11 +2516,135 @@ function renderHistoryMessages(oid) {
     sep.textContent = isHuman ? '人工接待' : 'AI 对话';
     container.appendChild(sep);
     for (const m of session.log) {
+      if (m.ts > 0) {
+        const d = new Date(m.ts * 1000).toLocaleDateString('zh-CN', {year:'numeric',month:'2-digit',day:'2-digit'}).replace(/\//g, '-');
+        if (d !== lastDate) {
+          lastDate = d;
+          const anchor = document.createElement('div');
+          anchor.dataset.date = d;
+          anchor.className = 'date-anchor';
+          anchor.style.cssText = 'text-align:center;font-size:11px;color:var(--text-4);padding:6px 0 2px;letter-spacing:.04em;';
+          anchor.textContent = d;
+          container.appendChild(anchor);
+        }
+      }
       appendMsgBubble(container, m);
     }
   }
 
-  if (scrolledToBottom) container.scrollTop = container.scrollHeight;
+  buildDateJumper(currentHistory);
+  container.scrollTop = container.scrollHeight;
+}
+
+// ── 日期跳转 ──────────────────────────────────────────────────────────────────
+function buildDateJumper(sessions) {
+  const dropdown = document.getElementById('date-jumper-dropdown');
+  const jumper   = document.getElementById('date-jumper');
+  dropdown.innerHTML = '';
+
+  const datesWithMsg = new Set();
+  for (const sess of sessions) {
+    for (const m of (sess.log || [])) {
+      if (m.ts > 0) {
+        const d = new Date(m.ts * 1000).toLocaleDateString('zh-CN', {year:'numeric',month:'2-digit',day:'2-digit'}).replace(/\//g, '-');
+        datesWithMsg.add(d);
+      }
+    }
+  }
+
+  if (datesWithMsg.size === 0) { jumper.style.display = 'none'; return; }
+  jumper.style.display = '';
+
+  const sorted = [...datesWithMsg].sort();
+  const minDate = new Date(sorted[0]);
+  const maxDate = new Date(sorted[sorted.length - 1]);
+
+  for (let d = new Date(minDate); d <= maxDate; d.setDate(d.getDate() + 1)) {
+    const key = d.toLocaleDateString('zh-CN', {year:'numeric',month:'2-digit',day:'2-digit'}).replace(/\//g, '-');
+    const hasMsg = datesWithMsg.has(key);
+    const item = document.createElement('div');
+    item.style.cssText = `padding:7px 14px;font-size:12px;cursor:${hasMsg ? 'pointer' : 'default'};color:${hasMsg ? 'var(--teal)' : 'var(--text-4)'};font-weight:${hasMsg ? '600' : '400'};`;
+    item.textContent = key;
+    if (hasMsg) {
+      item.onmouseenter = () => item.style.background = 'var(--bg-elevated)';
+      item.onmouseleave = () => item.style.background = '';
+      item.onclick = () => jumpToDate(key);
+    }
+    dropdown.appendChild(item);
+  }
+}
+
+function toggleDateJumper() {
+  const dd = document.getElementById('date-jumper-dropdown');
+  dd.style.display = dd.style.display === 'none' ? '' : 'none';
+}
+
+function jumpToDate(dateStr) {
+  document.getElementById('date-jumper-dropdown').style.display = 'none';
+  const anchor = document.querySelector(`.date-anchor[data-date="${dateStr}"]`);
+  if (anchor) anchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// ── 日志内容搜索 ───────────────────────────────────────────────────────────────
+async function runLogSearch() {
+  const q        = document.getElementById('log-search-q').value.trim();
+  const dateFrom = document.getElementById('log-search-from').value;
+  const dateTo   = document.getElementById('log-search-to').value;
+  if (!q && !dateFrom && !dateTo) { showToast('请输入关键词或选择日期范围'); return; }
+
+  const params = new URLSearchParams({ token });
+  if (!isAdmin && agentName) params.set('agent_name', agentName);
+  if (q)        params.set('q', q);
+  if (dateFrom) params.set('date_from', dateFrom);
+  if (dateTo)   params.set('date_to', dateTo);
+
+  try {
+    const res = await fetch(`${scfUrl}/admin/search?${params}`, { signal: AbortSignal.timeout(30000) });
+    const data = await res.json();
+    if (!data.ok) { showToast('搜索失败：' + (data.error || '')); return; }
+    renderLogSearchResults(data.results);
+  } catch(e) {
+    showToast('搜索请求失败');
+  }
+}
+
+function renderLogSearchResults(results) {
+  const container = document.getElementById('log-search-results');
+  const sessionList = document.getElementById('session-list');
+  if (!results.length) {
+    showToast('未找到匹配的聊天记录');
+    return;
+  }
+  sessionList.style.display = 'none';
+  container.style.display = 'flex';
+  container.style.flexDirection = 'column';
+
+  container.innerHTML = `<div style="padding:8px 14px;font-size:11px;color:var(--text-3)">共 ${results.length} 条结果 <span onclick="clearLogSearch()" style="cursor:pointer;color:var(--teal);margin-left:8px">清除</span></div>`;
+  for (const r of results) {
+    const date = new Date(r.ts * 1000).toLocaleString('zh-CN', {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+    const roleLabel = r.role === 'user' ? '用户' : r.role === 'agent' ? (r.agent_name || '客服') : 'AI';
+    const snippet = r.text.length > 60 ? r.text.slice(0, 60) + '…' : r.text;
+    const card = document.createElement('div');
+    card.style.cssText = 'padding:10px 14px;border-bottom:1px solid var(--border);cursor:pointer;';
+    card.onmouseenter = () => card.style.background = 'var(--bg-elevated)';
+    card.onmouseleave = () => card.style.background = '';
+    card.innerHTML = `
+      <div style="display:flex;justify-content:space-between;margin-bottom:3px">
+        <span style="font-size:12px;font-weight:600;color:var(--text-1)">${escHtml(r.nickname || r.openid.slice(0,8)+'...')}</span>
+        <span style="font-size:11px;color:var(--text-3)">${date}</span>
+      </div>
+      <div style="font-size:12px;color:var(--text-2)"><span style="color:var(--text-3)">[${roleLabel}]</span> ${escHtml(snippet)}</div>`;
+    card.onclick = () => {
+      historyOpenid = r.openid;
+      selectHistoryUser(r.openid, r.nickname);
+    };
+    container.appendChild(card);
+  }
+}
+
+function clearLogSearch() {
+  document.getElementById('log-search-results').style.display = 'none';
+  document.getElementById('session-list').style.display = '';
 }
 
 // ── 统计面板 ──────────────────────────────────────────────────────────────────
@@ -2385,6 +2886,205 @@ function showToast(msg) {
   el.classList.add('show');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+// ── 客户备注 ──────────────────────────────────────────────────────────────────
+async function loadNote(openid) {
+  const bar = document.getElementById('note-bar');
+  if (!bar || !scfUrl || !token) return;
+  bar.style.display = '';
+  try {
+    const res = await fetch(
+      `${scfUrl}/admin/notes/${encodeURIComponent(openid)}?token=${encodeURIComponent(token)}`,
+      { signal: AbortSignal.timeout(8000) }
+    );
+    const data = await res.json();
+    if (data.ok) renderNote(data);
+  } catch(e) {}
+}
+
+function renderNote(data) {
+  const display = document.getElementById('note-display');
+  const meta = document.getElementById('note-meta');
+  if (!display) return;
+  if (data.note) {
+    display.textContent = data.note;
+    display.classList.add('has-note');
+  } else {
+    display.textContent = '— 点击添加备注';
+    display.classList.remove('has-note');
+  }
+  if (data.updated_by && data.updated_at) {
+    const t = new Date(data.updated_at * 1000);
+    const pad = n => String(n).padStart(2, '0');
+    meta.textContent = `${data.updated_by} · ${pad(t.getMonth()+1)}-${pad(t.getDate())} ${pad(t.getHours())}:${pad(t.getMinutes())}`;
+  } else {
+    if (meta) meta.textContent = '';
+  }
+}
+
+function startEditNote() {
+  const display = document.getElementById('note-display');
+  const editDiv = document.getElementById('note-edit');
+  const input = document.getElementById('note-input');
+  const counter = document.getElementById('note-counter');
+  if (!display || !editDiv) return;
+  const current = display.classList.contains('has-note') ? display.textContent : '';
+  input.value = current;
+  counter.textContent = current.length + '/200';
+  display.style.display = 'none';
+  editDiv.style.display = '';
+  input.focus();
+}
+
+async function saveNote() {
+  const input = document.getElementById('note-input');
+  const note = input.value.trim();
+  if (note.length > 200) { showToast('备注不能超过200字'); return; }
+  if (!currentOpenid) return;
+  try {
+    const res = await fetch(
+      `${scfUrl}/admin/notes/${encodeURIComponent(currentOpenid)}?token=${encodeURIComponent(token)}`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ note, agent_name: agentName }),
+      }
+    );
+    const data = await res.json();
+    if (data.ok) {
+      showToast('备注已保存');
+      cancelEditNote();
+      loadNote(currentOpenid);
+    } else {
+      showToast('保存失败：' + (data.error || ''));
+    }
+  } catch(e) { showToast('网络错误'); }
+}
+
+function cancelEditNote() {
+  const nd = document.getElementById('note-display');
+  const ne = document.getElementById('note-edit');
+  if (nd) nd.style.display = '';
+  if (ne) ne.style.display = 'none';
+}
+
+// ── 常用语模板 ────────────────────────────────────────────────────────────────
+async function fetchQuickReplies() {
+  if (!scfUrl || !token || !agentName) return;
+  try {
+    const res = await fetch(
+      `${scfUrl}/admin/quick_replies?token=${encodeURIComponent(token)}&agent_name=${encodeURIComponent(agentName)}`,
+      { signal: AbortSignal.timeout(8000) }
+    );
+    const data = await res.json();
+    if (data.ok) agentQuickReplies = data.quick_replies || [];
+  } catch(e) {}
+}
+
+function toggleQuickPanel() {
+  const panel = document.getElementById('quick-reply-panel');
+  if (!panel) return;
+  const isHidden = panel.style.display === 'none' || !panel.style.display;
+  if (!isHidden) { panel.style.display = 'none'; return; }
+  renderQuickReplyList();
+  panel.style.display = 'flex';
+  panel.style.flexDirection = 'column';
+}
+
+function renderQuickReplyList() {
+  const list = document.getElementById('quick-reply-list');
+  if (!list) return;
+  if (agentQuickReplies.length === 0) {
+    list.innerHTML = '<div style="padding:16px;font-size:12px;color:var(--text-4);text-align:center;">暂无常用语，点击下方管理</div>';
+    return;
+  }
+  list.innerHTML = '';
+  agentQuickReplies.forEach((text, idx) => {
+    const div = document.createElement('div');
+    div.className = 'quick-reply-item';
+    div.title = text;
+    const span = document.createElement('span');
+    span.textContent = text;
+    span.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;';
+    span.onclick = () => insertQuickReply(text);
+    const del = document.createElement('button');
+    del.textContent = '✕';
+    del.title = '删除';
+    del.style.cssText = 'background:none;border:none;cursor:pointer;color:var(--red);font-size:12px;flex-shrink:0;padding:0 0 0 6px;opacity:0.6;transition:opacity 0.15s;';
+    del.onmouseenter = () => del.style.opacity = '1';
+    del.onmouseleave = () => del.style.opacity = '0.6';
+    del.onclick = async (e) => { e.stopPropagation(); await deleteQuickReply(idx); };
+    div.style.cssText = 'display:flex;align-items:center;';
+    div.appendChild(span);
+    div.appendChild(del);
+    list.appendChild(div);
+  });
+}
+
+function insertQuickReply(text) {
+  const inp = document.getElementById('reply-input');
+  if (inp) inp.value = (inp.value ? inp.value + '\n' : '') + text;
+  document.getElementById('quick-reply-panel').style.display = 'none';
+  if (inp) inp.focus();
+}
+
+function openQuickManage() {
+  document.getElementById('quick-reply-panel').style.display = 'none';
+  renderQuickManageList();
+  document.getElementById('quick-manage-modal').style.display = 'flex';
+}
+
+function closeQuickManage() {
+  document.getElementById('quick-manage-modal').style.display = 'none';
+  document.getElementById('quick-new-input').value = '';
+}
+
+function renderQuickManageList() {
+  const list = document.getElementById('quick-items-list');
+  if (!list) return;
+  list.innerHTML = '';
+  if (agentQuickReplies.length === 0) {
+    list.innerHTML = '<div style="padding:12px;font-size:12px;color:var(--text-4);text-align:center;">暂无常用语，请在下方添加</div>';
+    return;
+  }
+  agentQuickReplies.forEach((text, idx) => {
+    const div = document.createElement('div');
+    div.className = 'quick-manage-item';
+    div.innerHTML = `<span title="${escHtml(text)}">${escHtml(text)}</span><button onclick="deleteQuickReply(${idx})" title="删除">✕</button>`;
+    list.appendChild(div);
+  });
+}
+
+async function addQuickReply() {
+  const input = document.getElementById('quick-new-input');
+  const text = input.value.trim();
+  if (!text) { showToast('请输入常用语内容'); return; }
+  if (text.length > 100) { showToast('常用语最多100字'); return; }
+  if (agentQuickReplies.length >= 20) { showToast('常用语最多20条'); return; }
+  const newReplies = [...agentQuickReplies, text];
+  const ok = await saveQuickReplies(newReplies);
+  if (ok) { input.value = ''; renderQuickManageList(); showToast('已添加'); }
+}
+
+async function deleteQuickReply(idx) {
+  const newReplies = agentQuickReplies.filter((_, i) => i !== idx);
+  const ok = await saveQuickReplies(newReplies);
+  if (ok) { renderQuickReplyList(); renderQuickManageList(); showToast('已删除'); }
+}
+
+async function saveQuickReplies(newReplies) {
+  try {
+    const res = await fetch(`${scfUrl}/admin/quick_replies?token=${encodeURIComponent(token)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agent_name: agentName, quick_replies: newReplies }),
+    });
+    const data = await res.json();
+    if (data.ok) { agentQuickReplies = newReplies; return true; }
+    showToast('保存失败：' + (data.error || ''));
+    return false;
+  } catch(e) { showToast('网络错误'); return false; }
 }
 </script>
 </body>

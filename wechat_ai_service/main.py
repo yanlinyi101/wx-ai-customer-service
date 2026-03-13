@@ -25,7 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 from ai_service import get_ai_reply, needs_human, clear_history, get_history
-from chat_logger import append_log, end_session as end_chat_session, get_user_log, list_all_users, update_nickname
+from chat_logger import append_log, end_session as end_chat_session, get_user_log, list_all_users, update_nickname, search_logs
 import stats_service
 from config import (
     WECHAT_ENCODING_AES_KEY,
@@ -39,6 +39,8 @@ from config import (
     LOG_DIR,
     load_agents,
     save_agents,
+    load_notes,
+    save_notes,
 )
 from crypto import WeChatCrypto
 from human_service import (
@@ -104,6 +106,8 @@ _ai_sessions: dict[str, str] = {}
 _human_sessions: dict[str, str] = {}
 # 账号 CRUD 操作锁
 _agents_lock = asyncio.Lock()
+# 备注 CRUD 操作锁
+_notes_lock = asyncio.Lock()
 
 crypto = WeChatCrypto(
     token=WECHAT_TOKEN,
@@ -577,6 +581,47 @@ async def admin_close(request: Request, token: str = Query("")):
     return {"ok": True}
 
 
+@app.post("/admin/initiate_session")
+async def admin_initiate_session(request: Request, token: str = Query("")):
+    """客服主动向历史用户发起人工会话"""
+    if not _check_admin(token):
+        return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+    body = await request.json()
+    openid     = body.get("openid", "").strip()
+    message    = body.get("message", "").strip()
+    agent_name = body.get("agent_name", "").strip()
+    if not openid or not message:
+        return JSONResponse({"ok": False, "error": "openid 和 message 不能为空"}, status_code=400)
+
+    # 若已被其他客服接入，拒绝
+    claimer = get_claimer(openid)
+    if claimer and claimer != agent_name:
+        return JSONResponse({"ok": False, "error": f"该用户已被 {claimer} 接入"}, status_code=409)
+
+    # 进入人工模式（幂等）并认领
+    await enter_human_mode(openid)
+    claim_session(openid, agent_name)
+
+    # 发送消息（失败时回滚）
+    success = await send_text_message(openid, message)
+    if not success:
+        await exit_human_mode(openid)
+        return JSONResponse(
+            {"ok": False, "error": "消息发送失败（用户可能超过48小时未互动）"},
+            status_code=500,
+        )
+
+    # 记录日志 & 广播
+    session_id = f"human_{int(time.time())}"
+    _human_sessions[openid] = session_id
+    attribute_session(openid, agent_name)
+    await append_log(openid, "agent", message, time.time(), session_id, agent_name=agent_name)
+    await push_message(openid, message, role="agent")
+    await _broadcast_sessions()
+    logger.info(f"[主动发起] agent={agent_name} → openid={openid[:8]}")
+    return {"ok": True}
+
+
 @app.post("/admin/reply_image")
 async def admin_reply_image(
     token: str = Query(""),
@@ -633,6 +678,48 @@ async def admin_reply_image(
     await _broadcast_sessions()
     logger.info(f"[admin_reply_image] 发送成功 openid={openid[:8]}... agent={agent_name or '未知'}")
     return {"ok": True}
+
+
+@app.get("/admin/search")
+async def admin_search(
+    token: str = Query(""),
+    q: str = Query(""),
+    date_from: str = Query(""),
+    date_to: str = Query(""),
+    agent_name: str = Query(""),
+):
+    """搜索聊天日志（内容关键词 + 日期范围）"""
+    import datetime
+    if not _check_admin(token):
+        return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+    if not q and not date_from and not date_to:
+        return JSONResponse({"ok": False, "error": "请提供关键词或日期范围"}, status_code=400)
+
+    def _parse_date(s: str, end: bool = False) -> float:
+        try:
+            d = datetime.date.fromisoformat(s)
+            dt = datetime.datetime.combine(d, datetime.time.max if end else datetime.time.min)
+            return dt.timestamp()
+        except Exception:
+            return float("inf") if end else 0.0
+
+    date_from_ts = _parse_date(date_from) if date_from else 0.0
+    date_to_ts = _parse_date(date_to, end=True) if date_to else float("inf")
+
+    allowed = None
+    if agent_name:
+        agents = await asyncio.to_thread(load_agents)
+        agent_rec = next((a for a in agents if a.get("username") == agent_name), None)
+        if agent_rec and not agent_rec.get("is_admin", False):
+            allowed = set(stats_service.get_agent_served_openids(agent_name))
+
+    results = await search_logs(
+        q=q,
+        date_from_ts=date_from_ts,
+        date_to_ts=date_to_ts,
+        allowed_openids=allowed,
+    )
+    return {"ok": True, "results": results, "count": len(results)}
 
 
 @app.get("/admin/all_users")
@@ -832,6 +919,81 @@ async def admin_delete_agent(username: str, token: str = Query("")):
     return {"ok": True}
 
 
+@app.get("/admin/notes/{openid}")
+async def admin_get_note(openid: str, token: str = Query("")):
+    """获取客户备注（所有客服共享）"""
+    if not _check_admin(token):
+        return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+    notes = await asyncio.to_thread(load_notes)
+    entry = notes.get(openid, {})
+    return {
+        "ok": True,
+        "note": entry.get("note", ""),
+        "updated_by": entry.get("updated_by", ""),
+        "updated_at": entry.get("updated_at", 0),
+    }
+
+
+@app.put("/admin/notes/{openid}")
+async def admin_put_note(openid: str, request: Request, token: str = Query("")):
+    """更新客户备注（200字以内，所有客服共享）"""
+    if not _check_admin(token):
+        return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+    body = await request.json()
+    note = body.get("note", "").strip()
+    agent_name = body.get("agent_name", "").strip()
+    if len(note) > 200:
+        return JSONResponse({"ok": False, "error": "备注不能超过200字"}, status_code=400)
+    async with _notes_lock:
+        notes = await asyncio.to_thread(load_notes)
+        updated = {**notes, openid: {"note": note, "updated_by": agent_name, "updated_at": int(time.time())}}
+        await asyncio.to_thread(save_notes, updated)
+    return {"ok": True}
+
+
+@app.get("/admin/quick_replies")
+async def admin_get_quick_replies(token: str = Query(""), agent_name: str = Query("")):
+    """获取指定客服的常用语列表"""
+    if not _check_admin(token):
+        return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+    agents = await asyncio.to_thread(load_agents)
+    agent = next((a for a in agents if a.get("username") == agent_name), None)
+    if agent is None:
+        return JSONResponse({"ok": False, "error": "账号不存在"}, status_code=404)
+    return {"ok": True, "quick_replies": agent.get("quick_replies", [])}
+
+
+@app.put("/admin/quick_replies")
+async def admin_put_quick_replies(request: Request, token: str = Query("")):
+    """更新客服常用语列表（最多20条，每条最多100字）"""
+    if not _check_admin(token):
+        return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+    body = await request.json()
+    agent_name = body.get("agent_name", "").strip()
+    quick_replies = body.get("quick_replies", [])
+    if not isinstance(quick_replies, list):
+        return JSONResponse({"ok": False, "error": "格式错误"}, status_code=400)
+    if len(quick_replies) > 20:
+        return JSONResponse({"ok": False, "error": "常用语最多20条"}, status_code=400)
+    for item in quick_replies:
+        if not isinstance(item, str) or len(item) > 100:
+            return JSONResponse({"ok": False, "error": "每条常用语最多100字"}, status_code=400)
+    async with _agents_lock:
+        agents = await asyncio.to_thread(load_agents)
+        new_agents = []
+        found = False
+        for a in agents:
+            if a.get("username") == agent_name:
+                found = True
+                new_agents.append({**a, "quick_replies": quick_replies})
+            else:
+                new_agents.append(a)
+        if not found:
+            return JSONResponse({"ok": False, "error": "账号不存在"}, status_code=404)
+        await asyncio.to_thread(save_agents, new_agents)
+    return {"ok": True}
+
+
 @app.get("/admin/gray")
 async def admin_gray_get(token: str = Query("")):
     """获取灰度测试配置"""
@@ -1004,7 +1166,9 @@ async def _handle_text(openid: str, text: str) -> None:
 
 
 async def _send_welcome(openid: str) -> None:
-    """用户进入客服对话时发送欢迎语"""
+    """用户进入客服对话时发送欢迎语（人工模式下跳过，避免客服主动发起时重复问候）"""
+    if await is_human_mode(openid):
+        return
     from gray_service import get_or_assign, get_config
     cfg = get_config()
     if cfg.get("enabled") and get_or_assign(openid) == "human":

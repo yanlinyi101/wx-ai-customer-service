@@ -6,14 +6,35 @@
 
 ## 功能特性
 
+### AI 自动回复
 - **意图路由** — 前置意图分类层，根据 RAG 评分区分闲聊 / 模糊问题 / 明确问题，使用不同提示词策略回复（零额外 LLM 调用）
 - **RAG 知识库检索** — 关键词 + 汉字重叠双重评分，优先从知识库提取答案注入提示词，支持图文回复
-- **AI 自动回复** — 接入火山方舟 Ark（doubao-seed-2-0-lite），兼容 OpenAI 格式，切换服务商只需改 `.env`
+- **AI 自动回复** — 接入火山方舟 Ark（doubao-seed-2-0-pro），兼容 OpenAI 格式，切换服务商只需改 `.env`
 - **多轮对话记忆** — 每个用户独立维护最近 5 轮对话历史
+
+### 人工客服
 - **一键转人工** — 检测关键词自动切换模式，通知管理员微信
-- **Web 管理后台** — 实时 WebSocket 推送 + HTTP 轮询双保险，展示完整 AI + 人工聊天记录
+- **会话认领** — 客服认领指定用户会话，独占接入避免抢单冲突
+- **主动发起会话** — 客服可从历史记录主动向用户发起对话
+- **超时自动回收** — 5 分钟无交互自动结束会话；3 分钟无人接入自动转回 AI
+- **图片收发** — 用户可发送图片，客服可回复图片
+
+### Web 管理后台（admin.html）
+- **实时推送** — WebSocket 主推 + HTTP 轮询双保险，零延迟显示新消息
+- **多账号管理** — 管理员可创建/删除子账号，设置管理员权限；普通账号仅见自己接待的数据
+- **在线状态** — 客服可切换在线 / 离线状态，离线时系统仍可转人工但有提示
+- **历史记录** — 查看任意用户的完整 AI + 人工聊天记录，支持日期跳转
+- **全文搜索** — 按消息内容关键词 + 日期范围搜索历史聊天记录
+- **星标用户** — 为重要用户打星标置顶，按账号独立存储
+- **客户备注** — 为客户添加最多 200 字的共享备注，所有客服可见可编辑
+- **常用语模板** — 每个客服账号独立维护最多 20 条常用回复，一键插入输入框
+- **数据统计** — 会话数、接待用户数、有效应答率、平均应答时长等多维度数据，支持日期范围筛选
+- **灰度测试** — 按比例将用户流量分配给 AI 或人工队列，实时可视化分流比例
+
+### 系统
 - **聊天记录持久化** — 全量对话写入服务器 JSON 文件，服务重启不丢失
 - **消息安全加密** — 全程微信安全模式（AES-256-CBC），防消息伪造
+- **消息去重** — MsgId 缓存防止微信重试导致消息被重复处理
 
 ---
 
@@ -31,14 +52,16 @@
   ├─ rag_service.py   检索知识库，返回 (context, images, top_score)
   ├─ ai_service.py    意图路由 → 选择提示词 → 调用 AI API
   ├─ human_service.py 人工模式状态管理（内存）
+  ├─ gray_service.py  灰度测试分组（内存 + JSON 持久化）
+  ├─ stats_service.py 会话统计数据读写
   ├─ chat_logger.py   全量对话写入本地 JSON 文件
   └─ wechat_api.py    调用微信客服消息 API 发送回复
 
-管理员
-  │  打开 admin.html
+客服
+  │  打开 admin.html（浏览器本地文件）
   ▼
 WebSocket /ws/admin ──── 实时推送新消息
-REST API /admin/*   ──── 回复、结束会话、查历史
+REST API /admin/*   ──── 登录、回复、结束会话、查历史、统计、备注、常用语
 ```
 
 ---
@@ -53,11 +76,16 @@ wx-ai-customer-service/
 │   ├── ai_service.py        意图路由、AI 调用、对话历史管理
 │   ├── rag_service.py       知识库加载与检索，返回 top_score 供路由判断
 │   ├── human_service.py     人工客服模式状态管理（内存）
+│   ├── gray_service.py      灰度测试分组与流量分配
+│   ├── stats_service.py     会话统计数据（读写 stats.json）
 │   ├── chat_logger.py       聊天记录持久化（本地 JSON 文件）
+│   ├── cos_logger.py        对话日志同步腾讯云 COS（可选）
 │   ├── wechat_api.py        微信 API（发消息、上传素材、access_token）
-│   ├── crypto.py            微信消息加解密（安全模式）
+│   ├── crypto.py            微信消息 AES-256-CBC 加解密
 │   ├── kb_tool.py           知识库管理命令行工具
-│   ├── admin.html           客服管理后台（单文件，直接浏览器打开）
+│   ├── admin.html           客服管理后台（单文件，浏览器直接打开）
+│   ├── agents.json          客服账号数据（含常用语，自动生成）
+│   ├── customer_notes.json  客户备注数据（自动生成）
 │   └── requirements.txt     Python 依赖
 ├── deploy/
 │   ├── nginx.conf           Nginx 反向代理配置（含 WebSocket 支持）
@@ -109,11 +137,15 @@ WECHAT_ENCODING_AES_KEY=43位随机字符串
 # AI 服务（火山方舟 Ark，兼容 OpenAI 格式）
 AI_API_KEY=your_ark_api_key
 AI_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
-AI_MODEL=doubao-seed-2-0-lite-260215
+AI_MODEL=doubao-seed-2-0-pro-260215
 
 # 管理后台
 ADMIN_TOKEN=自定义访问令牌（建议32位随机字符串）
 ADMIN_OPENID=管理员微信openid（可选，用于转人工时推送通知）
+
+# 图片存储（客服发图片功能需要）
+IMAGE_DIR=/opt/wechat_images
+IMAGE_BASE_URL=https://你的域名/images
 ```
 
 ### 4. 启动服务
@@ -158,14 +190,43 @@ python deploy.py   # 本地一键打包上传并重启服务
 
 ---
 
-## 管理后台使用
+## 管理后台功能说明
+
+### 会话处理
 
 | 操作 | 说明 |
 |------|------|
-| 等待列表 | 左侧显示所有请求转人工的用户，有新请求时弹出提示 |
-| 查看历史 | 点击用户后加载完整 AI + 人工对话记录 |
-| 发送回复 | 输入框输入，点击发送或 `Ctrl+Enter` |
+| 等待列表 | 左侧显示所有请求转人工的用户，有新请求时弹出提示音 + 系统通知 |
+| 接入会话 | 点击用户卡片 → 确认弹窗 → 独占认领，其他客服只读 |
+| 发送回复 | 支持文字（Ctrl+Enter 或 Enter 发送）和图片 |
+| 常用语 | 点击 💬 按钮弹出常用语列表，一键插入输入框；可在管理弹窗中增删 |
+| 客户备注 | 顶部 NOTE 栏点击可为当前用户添加/编辑共享备注（≤200字） |
 | 结束会话 | 点击"结束会话"，用户恢复 AI 自动回复模式 |
+| 主动发起 | 历史记录 Tab 选中用户后可主动发起人工会话 |
+
+### 历史记录
+
+| 操作 | 说明 |
+|------|------|
+| 切换 Tab | 点击"历史记录"标签加载所有历史用户 |
+| 搜索用户 | 按昵称过滤用户列表 |
+| 全文搜索 | 按消息关键词 + 日期范围搜索所有聊天记录 |
+| 日期跳转 | 历史记录内点击"跳转日期"可快速定位到指定日期 |
+| 星标 | 点击 ☆ 为用户打星标置顶 |
+
+### 账号权限
+
+| 角色 | 权限 |
+|------|------|
+| 管理员 | 查看所有用户数据、账号管理、灰度测试配置、数据统计 |
+| 普通客服 | 仅查看自己接待过的用户、使用常用语、编辑客户备注 |
+
+### 灰度测试
+
+在设置面板中可按比例将流量分配给 AI 或人工队列：
+- 启用后，新用户按设定比例随机分组
+- 分组结果持久化，同一用户始终走同一路径
+- 保存新配置后自动清空所有历史分组，重新采样
 
 ---
 
@@ -208,7 +269,7 @@ python kb_tool.py import          # 从 Excel 批量导入
 
 | 服务商 | `AI_BASE_URL` | `AI_MODEL` |
 |--------|--------------|------------|
-| 火山方舟（当前） | `https://ark.cn-beijing.volces.com/api/v3` | `doubao-seed-2-0-lite-260215` |
+| 火山方舟（当前） | `https://ark.cn-beijing.volces.com/api/v3` | `doubao-seed-2-0-pro-260215` |
 | DeepSeek | `https://api.deepseek.com` | `deepseek-chat` |
 | OpenAI | `https://api.openai.com/v1` | `gpt-4o-mini` |
 
@@ -223,8 +284,34 @@ python kb_tool.py import          # 从 Excel 批量导入
 | HTTP 客户端 | httpx（异步） |
 | 消息加解密 | pycryptodome（AES-256-CBC） |
 | 部署 | 云服务器 + systemd + Nginx |
-| AI 接口 | 火山方舟 Ark（doubao-seed-2-0-lite，兼容 OpenAI 格式） |
+| AI 接口 | 火山方舟 Ark（doubao-seed-2-0-pro，兼容 OpenAI 格式） |
 | 聊天记录 | 本地 JSON 文件（`/opt/wechat_chat_logs/`） |
+| 管理后台 | 纯 HTML + 原生 JS（无框架，浏览器直接打开） |
+
+---
+
+## API 端点速览
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET/POST | `/webhook` | 微信服务器验证 & 消息接收 |
+| GET | `/health` | 健康检查 |
+| POST | `/admin/login` | 客服登录 |
+| GET | `/admin/sessions` | 获取实时会话列表 |
+| POST | `/admin/reply` | 客服发送文字回复 |
+| POST | `/admin/reply_image` | 客服发送图片回复 |
+| POST | `/admin/claim` | 认领会话 |
+| POST | `/admin/close` | 结束会话 |
+| POST | `/admin/initiate_session` | 主动发起会话 |
+| GET | `/admin/history/{openid}` | 获取用户聊天记录 |
+| GET | `/admin/all_users` | 获取历史用户列表 |
+| GET | `/admin/search` | 全文搜索聊天记录 |
+| GET/PUT | `/admin/notes/{openid}` | 获取/更新客户备注 |
+| GET/PUT | `/admin/quick_replies` | 获取/更新客服常用语 |
+| GET/POST | `/admin/gray` | 灰度测试配置 |
+| GET/POST/PUT/DELETE | `/admin/agents` | 客服账号管理 |
+| GET | `/admin/stats` | 数据统计 |
+| WS | `/ws/admin` | 实时 WebSocket 推送 |
 
 ---
 
