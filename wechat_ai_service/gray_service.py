@@ -55,6 +55,13 @@ def clear(openid: str) -> None:
     _assignments.pop(openid, None)
 
 
+def clear_all() -> None:
+    """清除所有用户的分组记录（灰度配置变更时调用，下次访问重新随机分配）"""
+    count = len(_assignments)
+    _assignments.clear()
+    logger.info(f"[GRAY] 已清空所有用户分组记录，共 {count} 条")
+
+
 def update_config(enabled: bool, ai_ratio: float) -> None:
     """管理员从后台修改后调用，实时生效并持久化"""
     global _enabled, _ai_ratio

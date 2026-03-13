@@ -831,8 +831,9 @@ async def admin_gray_set(request: Request, token: str = Query("")):
     body = await request.json()
     enabled  = bool(body.get("enabled", False))
     ai_ratio = float(body.get("ai_ratio", 0.2))
-    from gray_service import update_config
+    from gray_service import update_config, clear_all
     update_config(enabled, ai_ratio)
+    clear_all()
     return {"ok": True}
 
 
