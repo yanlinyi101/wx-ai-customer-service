@@ -13,6 +13,7 @@ AI 提供商：
 
 其他功能：
     - 每用户独立对话历史（内存，重启清空），最多保留 MAX_HISTORY_TURNS 轮
+    - 历史字典 key 为 f"{app_id}:{openid}"，支持多小程序命名空间隔离
     - AI 调用失败自动重试一次；CLEAR 模式下重试失败时用知识库第一条答案兜底
 """
 
@@ -46,7 +47,7 @@ logger = logging.getLogger(__name__)
 
 # ──────────────────────────────────────────
 # 每个用户的对话历史（内存存储，重启清空）
-# key: openid, value: deque of {"role": ..., "content": ...}
+# key: f"{app_id}:{openid}"，支持多小程序命名空间隔离
 # ──────────────────────────────────────────
 _history: dict[str, deque] = defaultdict(lambda: deque(maxlen=MAX_HISTORY_TURNS * 2))
 _turn_counts: dict[str, int] = defaultdict(int)      # 累计对话轮数
@@ -58,18 +59,21 @@ def needs_human(text: str) -> bool:
     return any(kw in text for kw in HUMAN_TAKEOVER_KEYWORDS)
 
 
-def add_to_history(openid: str, role: str, content: str) -> None:
-    _history[openid].append({"role": role, "content": content})
+def add_to_history(app_id: str, openid: str, role: str, content: str) -> None:
+    uid = f"{app_id}:{openid}"
+    _history[uid].append({"role": role, "content": content})
 
 
-def get_history(openid: str) -> list:
-    return list(_history[openid])
+def get_history(app_id: str, openid: str) -> list:
+    uid = f"{app_id}:{openid}"
+    return list(_history[uid])
 
 
-def clear_history(openid: str) -> None:
-    _history[openid].clear()
-    _turn_counts[openid] = 0
-    _low_conf_counts[openid] = 0
+def clear_history(app_id: str, openid: str) -> None:
+    uid = f"{app_id}:{openid}"
+    _history[uid].clear()
+    _turn_counts[uid] = 0
+    _low_conf_counts[uid] = 0
 
 
 # ──────────────────────────────────────────
@@ -84,19 +88,20 @@ _ESCALATION_HINTS = {
 }
 
 
-def check_escalation(openid: str, text: str, top_score: float) -> str | None:
+def check_escalation(app_id: str, openid: str, text: str, top_score: float) -> str | None:
     """返回升级原因字符串或 None。优先级：物流 > 烦躁 > 低置信度 > 长对话"""
+    uid = f"{app_id}:{openid}"
     if any(kw in text for kw in LOGISTICS_KEYWORDS):
         return "logistics"
     if any(kw in text for kw in FRUSTRATION_KEYWORDS):
         return "frustration"
     if top_score < INTENT_HIGH_THRESHOLD:
-        _low_conf_counts[openid] += 1
-        if _low_conf_counts[openid] >= LOW_CONF_TURNS_THRESHOLD:
+        _low_conf_counts[uid] += 1
+        if _low_conf_counts[uid] >= LOW_CONF_TURNS_THRESHOLD:
             return "low_confidence"
     else:
-        _low_conf_counts[openid] = 0  # 高分命中重置
-    turns = _turn_counts[openid]
+        _low_conf_counts[uid] = 0  # 高分命中重置
+    turns = _turn_counts[uid]
     if turns >= MAX_TURNS_BEFORE_ESCALATION and (turns - MAX_TURNS_BEFORE_ESCALATION) % 5 == 0:
         return "long_conversation"
     return None
@@ -116,14 +121,15 @@ def _classify_intent(top_score: float) -> str:
         return "CLEAR"
 
 
-async def get_ai_reply(openid: str, user_message: str) -> tuple[str, list[str]]:
+async def get_ai_reply(app_id: str, openid: str, user_message: str) -> tuple[str, list[str]]:
     """
     调用 AI 接口获取回复。
     返回：
       - reply_text: AI 生成的文字回复
       - image_urls: 知识库命中条目中附带的图片链接（可为空列表）
     """
-    add_to_history(openid, "user", user_message)
+    uid = f"{app_id}:{openid}"
+    add_to_history(app_id, openid, "user", user_message)
 
     # RAG：检索知识库并路由意图
     image_urls: list[str] = []
@@ -149,7 +155,7 @@ async def get_ai_reply(openid: str, user_message: str) -> tuple[str, list[str]]:
 
     messages = [
         {"role": "system", "content": system},
-        *get_history(openid),
+        *get_history(app_id, openid),
     ]
 
     headers = {
@@ -187,9 +193,9 @@ async def get_ai_reply(openid: str, user_message: str) -> tuple[str, list[str]]:
                     reply = "抱歉，我暂时无法回复，请稍后再试或联系人工客服。"
                     image_urls = []
 
-    add_to_history(openid, "assistant", reply)
-    _turn_counts[openid] += 1
-    reason = check_escalation(openid, user_message, top_score)
+    add_to_history(app_id, openid, "assistant", reply)
+    _turn_counts[uid] += 1
+    reason = check_escalation(app_id, openid, user_message, top_score)
     if reason:
         reply = reply + "\n\n" + _ESCALATION_HINTS[reason]
         image_urls = []  # 不确定时不发图片，避免发送错误图片
