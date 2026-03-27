@@ -1426,6 +1426,7 @@ let currentTab = 'waiting';   // 'waiting' | 'history'
 let historyUsers = [];        // [{openid, nickname, last_ts, msg_count}]
 let cachedHistoryUsers = [];  // 用于星标重渲染时的缓存
 let historyOpenid = null;     // 历史 Tab 当前选中的 openid
+let historyAppId = null;      // 历史 Tab 当前选中用户的 app_id
 let historySearch = '';       // 搜索过滤词
 
 // WebSocket 状态
@@ -1651,7 +1652,7 @@ function playBeep() {
 
 function handleSessionsData(sessionsArr) {
   const newSessions = {};
-  for (const s of sessionsArr) newSessions[s.openid] = s;
+  for (const s of sessionsArr) newSessions[s.uid || s.openid] = s;
 
   const newOids = [];
   for (const oid of Object.keys(newSessions)) {
@@ -1735,12 +1736,17 @@ async function loadSessions() {
 }
 
 // ── 获取用户全量聊天历史（文件持久化数据） ─────────────────────────────────────
-async function fetchHistory(oid) {
+async function fetchHistory(oid, appId = '') {
   if (!scfUrl || !token || !oid) return;
   _loadingHistory = true;
+  // oid may be a uid (app_id:openid) from the waiting tab, or a plain openid from the history tab
+  const sess = sessions[oid];
+  const realOpenid = sess?.openid || oid;
+  const realAppId = appId || sess?.app_id || '';
   try {
+    const appIdParam = realAppId ? `&app_id=${encodeURIComponent(realAppId)}` : '';
     const res = await fetch(
-      `${scfUrl}/admin/history/${encodeURIComponent(oid)}?token=${encodeURIComponent(token)}`,
+      `${scfUrl}/admin/history/${encodeURIComponent(realOpenid)}?token=${encodeURIComponent(token)}${appIdParam}`,
       { signal: AbortSignal.timeout(10000) }
     );
     if (res.ok) {
@@ -1792,6 +1798,7 @@ function renderSessionList(newOids) {
         <span>${escHtml(s.nickname || (s.short + '...'))}</span>
         <span class="badge${isNew ? ' new' : ''}">${s.count}</span>
       </div>
+      ${s.app_name ? `<div style="font-size:10px;color:var(--indigo);font-family:'JetBrains Mono',monospace;margin-bottom:2px;letter-spacing:0.02em;">📱 ${escHtml(s.app_name)}</div>` : ''}
       ${claimedBy ? `<div style="font-size:10px;color:var(--teal);font-family:'JetBrains Mono',monospace;margin-bottom:2px;letter-spacing:0.02em;">已接入: ${escHtml(claimedBy)}</div>` : ''}
       <div class="session-preview">${renderWxEmoji(lastMsg)}</div>
     `;
@@ -1959,7 +1966,7 @@ async function sendReply() {
     const res = await fetch(`${scfUrl}/admin/reply?token=${encodeURIComponent(token)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ openid: currentOpenid, message: text, agent_name: agentName }),
+      body: JSON.stringify({ openid: sessions[currentOpenid]?.openid || currentOpenid, app_id: sessions[currentOpenid]?.app_id || '', message: text, agent_name: agentName }),
     });
     const data = await res.json();
     if (data.ok) {
@@ -1988,7 +1995,7 @@ async function closeSession() {
     const res = await fetch(`${scfUrl}/admin/close?token=${encodeURIComponent(token)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ openid: currentOpenid, agent_name: agentName }),
+      body: JSON.stringify({ openid: sessions[currentOpenid]?.openid || currentOpenid, app_id: sessions[currentOpenid]?.app_id || '', agent_name: agentName }),
     });
     const data = await res.json();
     if (data.ok) {
@@ -2022,7 +2029,7 @@ async function initiateSession() {
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ openid: historyOpenid, message: text, agent_name: agentName }),
+        body: JSON.stringify({ openid: historyOpenid, app_id: historyAppId || '', message: text, agent_name: agentName }),
       }
     );
     const data = await res.json();
@@ -2227,7 +2234,7 @@ async function claimAndJoinSession(oid) {
     const res = await fetch(`${scfUrl}/admin/claim?token=${encodeURIComponent(token)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ openid: oid, agent_name: agentName }),
+      body: JSON.stringify({ openid: sessions[oid]?.openid || oid, app_id: sessions[oid]?.app_id || '', agent_name: agentName }),
     });
     const data = await res.json();
     if (data.ok) {
@@ -2344,7 +2351,8 @@ async function sendImage(input) {
   input.value = '';
 
   const formData = new FormData();
-  formData.append('openid', currentOpenid);
+  formData.append('openid', sessions[currentOpenid]?.openid || currentOpenid);
+  formData.append('app_id', sessions[currentOpenid]?.app_id || '');
   formData.append('image', file);
   formData.append('agent_name', agentName);
 
@@ -2380,6 +2388,7 @@ function switchTab(tab) {
   currentOpenid = null;
   currentHistory = null;
   historyOpenid = null;
+  historyAppId = null;
   const dj = document.getElementById('date-jumper');
   if (dj) dj.style.display = 'none';
   showChatPanel(false);
@@ -2479,13 +2488,14 @@ function renderHistoryUserList(users) {
       </div>
       <div class="user-meta">${u.msg_count} 条 · ${lastTime}</div>
     `;
-    div.onclick = () => selectHistoryUser(u.openid, u.nickname);
+    div.onclick = () => selectHistoryUser(u.openid, u.nickname, u.app_id || '');
     list.appendChild(div);
   }
 }
 
-function selectHistoryUser(oid, nickname) {
+function selectHistoryUser(oid, nickname, appId = '') {
   historyOpenid = oid;
+  historyAppId = appId;
   currentOpenid = oid;
   currentHistory = null;
   showChatPanel(true, true);
@@ -2495,7 +2505,7 @@ function selectHistoryUser(oid, nickname) {
   container.innerHTML = `<div style="text-align:center;color:var(--text-4);padding:48px;font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:0.04em;">加载中...</div>`;
   const displayName = nickname || (oid.slice(0, 8) + '...');
   document.getElementById('chat-title').textContent = `历史记录：${displayName}`;
-  fetchHistory(oid);
+  fetchHistory(oid, appId);
 }
 
 function renderHistoryMessages(oid) {
@@ -2635,8 +2645,7 @@ function renderLogSearchResults(results) {
       </div>
       <div style="font-size:12px;color:var(--text-2)"><span style="color:var(--text-3)">[${roleLabel}]</span> ${escHtml(snippet)}</div>`;
     card.onclick = () => {
-      historyOpenid = r.openid;
-      selectHistoryUser(r.openid, r.nickname);
+      selectHistoryUser(r.openid, r.nickname, r.app_id || '');
     };
     container.appendChild(card);
   }

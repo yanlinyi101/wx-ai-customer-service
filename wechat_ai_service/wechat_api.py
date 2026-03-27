@@ -1,8 +1,8 @@
 """
 微信 API 调用模块
-- 获取并缓存 access_token
+- 获取并缓存 access_token（按 app_id 隔离）
 - 发送客服文本消息
-- 上传图片素材并缓存 media_id
+- 上传图片素材并缓存 media_id（按 app_id 隔离）
 - 发送客服图片消息
 """
 
@@ -11,30 +11,38 @@ import time
 
 import httpx
 
-from config import WECHAT_APP_ID, WECHAT_APP_SECRET
+from config import MINIAPPS
 
 logger = logging.getLogger(__name__)
 
 # ──────────────────────────────────────────
-# Access Token 内存缓存（有效期7200秒）
+# Access Token 内存缓存（有效期7200秒，按 app_id 隔离）
 # ──────────────────────────────────────────
-_token_cache = {
-    "value": "",
-    "expire_at": 0.0,
-}
+_token_cache: dict[str, dict] = {}  # app_id -> {"value": str, "expire_at": float}
 
 
-async def get_access_token() -> str:
-    """获取微信 access_token，自动缓存复用"""
+async def get_access_token(app_id: str) -> str:
+    """获取微信 access_token，按 app_id 自动缓存复用"""
     now = time.time()
-    if _token_cache["value"] and now < _token_cache["expire_at"]:
-        return _token_cache["value"]
+    cache = _token_cache.get(app_id)
+    if cache and cache.get("value") and now < cache.get("expire_at", 0):
+        return cache["value"]
+
+    # 查找该 app_id 对应的凭证
+    app_config = None
+    for cfg in MINIAPPS.values():
+        if cfg["app_id"] == app_id:
+            app_config = cfg
+            break
+    if not app_config:
+        logger.error(f"[微信API] 未找到 app_id={app_id} 的配置，请检查 MINIAPPS 设置")
+        return ""
 
     url = "https://api.weixin.qq.com/cgi-bin/stable_token"
     body = {
         "grant_type": "client_credential",
-        "appid": WECHAT_APP_ID,
-        "secret": WECHAT_APP_SECRET,
+        "appid": app_id,
+        "secret": app_config["app_secret"],
         "force_refresh": False,
     }
     async with httpx.AsyncClient() as client:
@@ -45,9 +53,10 @@ async def get_access_token() -> str:
     token = data.get("access_token", "")
     expires_in = data.get("expires_in", 7200)
 
-    _token_cache["value"] = token
-    _token_cache["expire_at"] = now + expires_in - 60  # 提前60秒刷新
-
+    _token_cache[app_id] = {
+        "value": token,
+        "expire_at": now + expires_in - 60,  # 提前60秒刷新
+    }
     return token
 
 
@@ -55,12 +64,14 @@ async def get_access_token() -> str:
 # 发送客服文本消息
 # ──────────────────────────────────────────
 
-async def send_text_message(openid: str, content: str) -> bool:
+async def send_text_message(openid: str, content: str, app_id: str) -> bool:
     """
     向用户发送客服文本消息
     注意：必须在用户发消息后 48 小时内调用，且最多回复5条
     """
-    token = await get_access_token()
+    token = await get_access_token(app_id)
+    if not token:
+        return False
     url = f"https://api.weixin.qq.com/cgi-bin/message/custom/send?access_token={token}"
 
     payload = {
@@ -84,7 +95,8 @@ async def send_text_message(openid: str, content: str) -> bool:
 # ──────────────────────────────────────────
 # 微信临时素材有效期 3 天，缓存 2 天后强制重新上传
 _MEDIA_TTL = 2 * 24 * 3600
-# key: image_url → (media_id, upload_timestamp)
+# key: f"{app_id}:{image_url}" → (media_id, upload_timestamp)
+# media_id 是 per-app 的，不同小程序不可复用
 _media_cache: dict[str, tuple[str, float]] = {}
 
 # 支持的图片格式及对应 Content-Type
@@ -95,7 +107,7 @@ _EXT_MAP = {
 }
 
 
-async def _upload_image(image_url: str) -> str:
+async def _upload_image(image_url: str, app_id: str) -> str:
     """下载图片并上传到微信临时素材库，返回 media_id"""
     async with httpx.AsyncClient(timeout=15) as client:
         img_resp = await client.get(image_url)
@@ -111,7 +123,9 @@ async def _upload_image(image_url: str) -> str:
             content_type = ct
             break
 
-    token = await get_access_token()
+    token = await get_access_token(app_id)
+    if not token:
+        return ""
     upload_url = (
         f"https://api.weixin.qq.com/cgi-bin/media/upload"
         f"?access_token={token}&type=image"
@@ -130,20 +144,22 @@ async def _upload_image(image_url: str) -> str:
     return media_id
 
 
-async def get_or_upload_media(image_url: str) -> str:
+async def get_or_upload_media(image_url: str, app_id: str) -> str:
     """
     获取图片的 media_id，优先使用缓存。
     缓存超过 2 天则重新上传。
+    注意：media_id 是 per-app 的，不同小程序需分别上传。
     """
+    cache_key = f"{app_id}:{image_url}"
     now = time.time()
-    if image_url in _media_cache:
-        media_id, ts = _media_cache[image_url]
+    if cache_key in _media_cache:
+        media_id, ts = _media_cache[cache_key]
         if now - ts < _MEDIA_TTL:
             return media_id
 
-    media_id = await _upload_image(image_url)
+    media_id = await _upload_image(image_url, app_id)
     if media_id:
-        _media_cache[image_url] = (media_id, now)
+        _media_cache[cache_key] = (media_id, now)
     return media_id
 
 
@@ -151,9 +167,11 @@ async def get_or_upload_media(image_url: str) -> str:
 # 发送客服图片消息
 # ──────────────────────────────────────────
 
-async def send_image_message(openid: str, media_id: str) -> bool:
+async def send_image_message(openid: str, media_id: str, app_id: str) -> bool:
     """发送客服图片消息（使用已上传的 media_id）"""
-    token = await get_access_token()
+    token = await get_access_token(app_id)
+    if not token:
+        return False
     url = f"https://api.weixin.qq.com/cgi-bin/message/custom/send?access_token={token}"
 
     payload = {
@@ -190,12 +208,14 @@ async def download_user_image(pic_url: str, save_path: str) -> bool:
         return False
 
 
-async def send_typing_indicator(openid: str) -> None:
+async def send_typing_indicator(openid: str, app_id: str) -> None:
     """
     显示"客服正在输入"状态，提升用户体验
     在调用 AI 前发送，让用户知道消息已收到
     """
-    token = await get_access_token()
+    token = await get_access_token(app_id)
+    if not token:
+        return
     url = f"https://api.weixin.qq.com/cgi-bin/message/custom/typing?access_token={token}"
 
     payload = {
@@ -207,13 +227,15 @@ async def send_typing_indicator(openid: str) -> None:
 
 
 # ──────────────────────────────────────────
-# 转接人工客服
+# 获取用户昵称
 # ──────────────────────────────────────────
 
-async def get_user_nickname(openid: str) -> str:
+async def get_user_nickname(openid: str, app_id: str) -> str:
     """获取微信用户昵称，失败则返回 openid 前8位"""
     try:
-        token = await get_access_token()
+        token = await get_access_token(app_id)
+        if not token:
+            return openid[:8]
         url = (
             f"https://api.weixin.qq.com/cgi-bin/user/info"
             f"?access_token={token}&openid={openid}&lang=zh_CN"
@@ -232,14 +254,16 @@ async def get_user_nickname(openid: str) -> str:
 # 转接人工客服
 # ──────────────────────────────────────────
 
-async def send_transfer_to_human(openid: str, kf_account: str = "") -> bool:
+async def send_transfer_to_human(openid: str, app_id: str, kf_account: str = "") -> bool:
     """
     将对话转接给人工客服。
     调用后该用户后续消息路由给微信客服平台，不再触发 Webhook。
 
     kf_account: 指定客服账号（格式 xxx@公众号ID），留空则系统自动分配
     """
-    token = await get_access_token()
+    token = await get_access_token(app_id)
+    if not token:
+        return False
     url = f"https://api.weixin.qq.com/cgi-bin/message/custom/send?access_token={token}"
 
     payload: dict = {
