@@ -23,6 +23,7 @@ load_dotenv()
 
 # ─────────────────────────────────────────────
 # 微信小程序配置（在 mp.weixin.qq.com 后台获取）
+# 单小程序向后兼容：仍可使用以下变量
 # ─────────────────────────────────────────────
 WECHAT_TOKEN            = os.getenv("WECHAT_TOKEN", "")
 WECHAT_APP_ID           = os.getenv("WECHAT_APP_ID", "")
@@ -123,6 +124,59 @@ COS_BUCKET     = os.getenv("COS_BUCKET", "")    # 格式：bucketname-appid
 # ─────────────────────────────────────────────
 ADMIN_TOKEN  = os.getenv("ADMIN_TOKEN", "")   # 管理页访问令牌（URL ?token=xxx）
 ADMIN_OPENID = os.getenv("ADMIN_OPENID", "")  # 客服人员微信 openid，转人工时推送通知（可空）
+
+# ─────────────────────────────────────────────
+# 多小程序配置
+#
+# 方式一（多小程序）：在 .env 中设置
+#   MINIAPP_SLUGS=app_a,app_b
+#   APP_APP_A_WECHAT_TOKEN=xxx
+#   APP_APP_A_WECHAT_APP_ID=wx111
+#   APP_APP_A_WECHAT_APP_SECRET=secret1
+#   APP_APP_A_WECHAT_ENCODING_AES_KEY=key1
+#   APP_APP_A_NAME=小程序A
+#   APP_APP_A_ADMIN_OPENID=oXxx  （可选，覆盖全局 ADMIN_OPENID）
+#
+# 方式二（单小程序，向后兼容）：不设置 MINIAPP_SLUGS，
+#   使用原有 WECHAT_TOKEN / WECHAT_APP_ID 等变量，
+#   自动映射为 slug="default"
+# ─────────────────────────────────────────────
+MINIAPP_SLUGS: list[str] = [
+    s.strip() for s in os.getenv("MINIAPP_SLUGS", "").split(",") if s.strip()
+]
+
+MINIAPPS: dict[str, dict] = {}
+
+if MINIAPP_SLUGS:
+    for _slug in MINIAPP_SLUGS:
+        _prefix = f"APP_{_slug.upper()}_"
+        MINIAPPS[_slug] = {
+            "token":            os.getenv(f"{_prefix}WECHAT_TOKEN", ""),
+            "app_id":           os.getenv(f"{_prefix}WECHAT_APP_ID", ""),
+            "app_secret":       os.getenv(f"{_prefix}WECHAT_APP_SECRET", ""),
+            "encoding_aes_key": os.getenv(f"{_prefix}WECHAT_ENCODING_AES_KEY", ""),
+            "name":             os.getenv(f"{_prefix}NAME", _slug),
+            "admin_openid":     os.getenv(f"{_prefix}ADMIN_OPENID", ADMIN_OPENID),
+        }
+else:
+    # 向后兼容：将原有单组配置映射为 slug="default"
+    if WECHAT_APP_ID:
+        MINIAPPS["default"] = {
+            "token":            WECHAT_TOKEN,
+            "app_id":           WECHAT_APP_ID,
+            "app_secret":       WECHAT_APP_SECRET,
+            "encoding_aes_key": WECHAT_ENCODING_AES_KEY,
+            "name":             "默认小程序",
+            "admin_openid":     ADMIN_OPENID,
+        }
+
+
+def get_app_name(app_id: str) -> str:
+    """通过 app_id 获取小程序显示名称"""
+    for cfg in MINIAPPS.values():
+        if cfg["app_id"] == app_id:
+            return cfg["name"]
+    return app_id
 
 # ─────────────────────────────────────────────
 # 聊天日志本地存储目录

@@ -5,6 +5,8 @@
 - 按用户 sticky 分组（ai / human）
 - 灰度配置持久化（gray_config.json）
 - 提供管理员 API 所需的 get_config / update_config
+
+内存字典 key 为 f"{app_id}:{openid}"，支持多小程序命名空间隔离。
 """
 
 import json
@@ -18,7 +20,7 @@ logger = logging.getLogger(__name__)
 _CONFIG_PATH = Path(__file__).parent / "gray_config.json"
 
 # ── 运行时状态 ──────────────────────────────────────────────────────────────
-_assignments: dict[str, str] = {}   # openid → "ai" | "human"
+_assignments: dict[str, str] = {}   # f"{app_id}:{openid}" → "ai" | "human"
 _enabled: bool = GRAY_ENABLED
 _ai_ratio: float = GRAY_AI_RATIO    # 初始值来自 config.py / env
 
@@ -40,19 +42,21 @@ _load_config()
 
 # ── 公开 API ────────────────────────────────────────────────────────────────
 
-def get_or_assign(openid: str) -> str:
+def get_or_assign(app_id: str, openid: str) -> str:
     """返回用户的分组（ai/human）。灰度未启用时始终返回 ai。"""
     if not _enabled:
         return "ai"
-    if openid not in _assignments:
-        _assignments[openid] = "ai" if random.random() < _ai_ratio else "human"
-        logger.debug(f"[GRAY] {openid[:8]} 新分组 → {_assignments[openid]}")
-    return _assignments[openid]
+    uid = f"{app_id}:{openid}"
+    if uid not in _assignments:
+        _assignments[uid] = "ai" if random.random() < _ai_ratio else "human"
+        logger.debug(f"[GRAY] {openid[:8]} 新分组 → {_assignments[uid]}")
+    return _assignments[uid]
 
 
-def clear(openid: str) -> None:
+def clear(app_id: str, openid: str) -> None:
     """清除用户的分组记录（会话关闭后调用，下次重新随机分配）"""
-    _assignments.pop(openid, None)
+    uid = f"{app_id}:{openid}"
+    _assignments.pop(uid, None)
 
 
 def clear_all() -> None:
@@ -74,9 +78,10 @@ def update_config(enabled: bool, ai_ratio: float) -> None:
     logger.info(f"[GRAY] 配置已更新 enabled={_enabled} ai_ratio={_ai_ratio}")
 
 
-def force_ai(openid: str) -> None:
+def force_ai(app_id: str, openid: str) -> None:
     """强制将用户锁定为 AI 分组（无人接入超时后调用，避免重复进入人工等待）"""
-    _assignments[openid] = "ai"
+    uid = f"{app_id}:{openid}"
+    _assignments[uid] = "ai"
     logger.debug(f"[GRAY] {openid[:8]} 强制锁定 → ai")
 
 

@@ -6,6 +6,11 @@ FastAPI 主入口
     微信消息 → crypto.py 解密 → 意图路由（ai_service）→ 火山方舟 LLM → 微信 API 回复
     转人工关键词命中时跳过 LLM，直接触发 human_service 转接客服
 
+多小程序支持：
+    每个小程序对应独立的 webhook URL：/webhook/{app_slug}
+    凭证（TOKEN/KEY）、Access Token、会话状态均按 app_id 隔离
+    管理后台统一展示所有小程序的会话，客服可跨小程序服务
+
 启动命令：
     uvicorn main:app --host 127.0.0.1 --port 8000 --workers 1
 
@@ -28,8 +33,6 @@ from ai_service import get_ai_reply, needs_human, clear_history, get_history
 from chat_logger import append_log, end_session as end_chat_session, get_user_log, list_all_users, update_nickname, search_logs
 import stats_service
 from config import (
-    WECHAT_ENCODING_AES_KEY,
-    WECHAT_TOKEN,
     WECHAT_APP_ID,
     KF_ACCOUNT,
     ADMIN_TOKEN,
@@ -37,6 +40,8 @@ from config import (
     IMAGE_DIR,
     IMAGE_BASE_URL,
     LOG_DIR,
+    MINIAPPS,
+    get_app_name,
     load_agents,
     save_agents,
     load_notes,
@@ -77,7 +82,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="微信小程序 AI 客服", version="1.0.0")
+app = FastAPI(title="微信小程序 AI 客服", version="2.0.0")
 
 # 5分钟无交互自动结束人工会话
 _IDLE_TIMEOUT_SECONDS = 5 * 60
@@ -92,6 +97,7 @@ app.add_middleware(
 )
 
 # MsgId 去重（防微信重试导致消息被处理两次）
+# key 格式: f"{app_slug}:{msg_id}" 防止不同小程序 MsgId 碰撞
 _processed_msg_ids: set[str] = set()
 _MSG_ID_MAX = 1000
 
@@ -100,20 +106,32 @@ _ws_admin_connections: set[WebSocket] = set()
 # 每个连接的发送队列（保证同一 WebSocket 的 send 串行，避免并发冲突）
 _ws_queues: dict[WebSocket, asyncio.Queue] = {}
 
-# AI 对话 session_id 追踪（openid -> session_id）
+# AI 对话 session_id 追踪（uid -> session_id），uid = f"{app_id}:{openid}"
 _ai_sessions: dict[str, str] = {}
-# 人工会话 session_id 追踪（openid -> session_id）
+# 人工会话 session_id 追踪（uid -> session_id）
 _human_sessions: dict[str, str] = {}
 # 账号 CRUD 操作锁
 _agents_lock = asyncio.Lock()
 # 备注 CRUD 操作锁
 _notes_lock = asyncio.Lock()
 
-crypto = WeChatCrypto(
-    token=WECHAT_TOKEN,
-    encoding_aes_key=WECHAT_ENCODING_AES_KEY,
-    app_id=WECHAT_APP_ID,
-)
+# ── 多小程序 crypto 实例映射 ────────────────────────────────────────────────
+# key: app_slug（与 webhook URL 中的 {app_slug} 对应）
+# value: WeChatCrypto 实例
+_crypto_map: dict[str, WeChatCrypto] = {}
+for _slug, _cfg in MINIAPPS.items():
+    if _cfg.get("token") and _cfg.get("encoding_aes_key") and _cfg.get("app_id"):
+        _crypto_map[_slug] = WeChatCrypto(
+            token=_cfg["token"],
+            encoding_aes_key=_cfg["encoding_aes_key"],
+            app_id=_cfg["app_id"],
+        )
+        logger.info(f"[多小程序] 已注册 slug={_slug} app_id={_cfg['app_id']} name={_cfg['name']}")
+    else:
+        logger.warning(f"[多小程序] slug={_slug} 配置不完整，跳过注册")
+
+if not _crypto_map:
+    logger.warning("[多小程序] 未注册任何小程序，请检查 MINIAPPS / MINIAPP_SLUGS 配置")
 
 
 @app.on_event("startup")
@@ -126,58 +144,61 @@ async def _auto_close_idle_sessions() -> None:
     while True:
         await asyncio.sleep(60)  # 每60秒检查一次
         try:
-            unattended_oids = get_unattended_openids(_UNATTENDED_TIMEOUT_SECONDS)
-            idle_oids = get_idle_openids(_IDLE_TIMEOUT_SECONDS)
+            unattended_uids = get_unattended_openids(_UNATTENDED_TIMEOUT_SECONDS)
+            idle_uids = get_idle_openids(_IDLE_TIMEOUT_SECONDS)
             processed = set()
             changed = False
 
             # 优先处理：3分钟无客服接入，转回AI
-            for openid in unattended_oids:
-                processed.add(openid)
+            for uid in unattended_uids:
+                processed.add(uid)
+                app_id, openid = uid.split(":", 1)
                 logger.info(f"[无人接入] 3分钟无客服接入，转回AI openid={openid[:8]}")
-                messages = get_session_queue(openid)
+                messages = get_session_queue(app_id, openid)
                 user_msgs = sum(1 for m in messages if m.get("role") == "user")
                 asyncio.create_task(asyncio.to_thread(
                     stats_service.record_session_close,
                     "", openid, user_msgs, 0, None,
                 ))
-                await exit_human_mode(openid)
-                # 灰度测试：超时转回AI后，锁定为AI分组，避免下次消息再次进入人工循环
+                await exit_human_mode(app_id, openid)
                 from gray_service import force_ai as gray_force_ai
-                gray_force_ai(openid)
+                gray_force_ai(app_id, openid)
                 await send_text_message(
                     openid,
                     "抱歉，当前客服繁忙暂时无法接入，已为您转回智能助手处理。\n"
                     "如需人工客服，请再次发送\"人工\"。",
+                    app_id,
                 )
-                session_id = _human_sessions.pop(openid, None)
+                session_id = _human_sessions.pop(uid, None)
                 if session_id:
-                    await end_chat_session(openid, session_id)
+                    await end_chat_session(app_id, openid, session_id)
                 changed = True
 
             # 其次处理：5分钟无交互（已有接入但用户停止发消息）
-            for openid in idle_oids:
-                if openid in processed:
+            for uid in idle_uids:
+                if uid in processed:
                     continue
+                app_id, openid = uid.split(":", 1)
                 logger.info(f"[超时关闭] 5分钟无交互，自动结束 openid={openid[:8]}")
-                messages = get_session_queue(openid)
+                messages = get_session_queue(app_id, openid)
                 user_msgs = sum(1 for m in messages if m.get("role") == "user")
                 agent_msgs_count = sum(1 for m in messages if m.get("role") == "agent")
-                attribution = get_session_attribution(openid)
+                attribution = get_session_attribution(app_id, openid)
                 asyncio.create_task(asyncio.to_thread(
                     stats_service.record_session_close,
                     attribution.get("agent_name") or "",
                     openid, user_msgs, agent_msgs_count,
                     attribution.get("response_time"),
                 ))
-                await exit_human_mode(openid)
+                await exit_human_mode(app_id, openid)
                 await send_text_message(
                     openid,
                     "您已超过5分钟未发送消息，客服已自动离线。如需继续咨询请重新发送消息 😊",
+                    app_id,
                 )
-                session_id = _human_sessions.pop(openid, None)
+                session_id = _human_sessions.pop(uid, None)
                 if session_id:
-                    await end_chat_session(openid, session_id)
+                    await end_chat_session(app_id, openid, session_id)
                 changed = True
 
             if changed:
@@ -281,14 +302,17 @@ async def _push_sessions_to_queue(queue: asyncio.Queue) -> None:
             "type": "sessions",
             "sessions": [
                 {
-                    "openid": oid,
-                    "short": oid[:8],
+                    "uid": uid,
+                    "openid": data["openid"],
+                    "app_id": data["app_id"],
+                    "app_name": get_app_name(data["app_id"]),
+                    "short": data["openid"][:8],
                     "messages": data["messages"],
                     "pre_history": data["pre_history"],
                     "count": len(data["messages"]),
                     "claimed_by": data.get("claimed_by", ""),
                 }
-                for oid, data in sessions.items()
+                for uid, data in sessions.items()
             ]
         }, ensure_ascii=False)
         queue.put_nowait(payload)
@@ -296,20 +320,20 @@ async def _push_sessions_to_queue(queue: asyncio.Queue) -> None:
         logger.warning(f"[WS] 入队失败: {e}")
 
 
-async def _get_nickname(openid: str) -> str:
+async def _get_nickname(app_id: str, openid: str) -> str:
     """获取用户昵称：优先读本地缓存，失败返回空串（不缓存 openid 前缀）"""
     try:
-        log = await get_user_log(openid)
+        log = await get_user_log(app_id, openid)
         nick = log.get("nickname", "")
         # 只有真实昵称（非 openid 前缀）才返回
         if nick and nick != openid[:8]:
             return nick
     except Exception:
         pass
-    nick = await get_user_nickname(openid)
+    nick = await get_user_nickname(openid, app_id)
     # 只缓存真实昵称，跳过 openid 前缀回退值
     if nick and nick != openid[:8]:
-        await update_nickname(openid, nick)
+        await update_nickname(app_id, openid, nick)
         return nick
     return ""
 
@@ -324,11 +348,16 @@ async def _broadcast_sessions() -> None:
         logger.error(f"[WS broadcast] 获取会话失败: {e}")
         return
 
-    async def _item(oid, data):
-        nick = await _get_nickname(oid)
+    async def _item(uid, data):
+        app_id = data["app_id"]
+        openid = data["openid"]
+        nick = await _get_nickname(app_id, openid)
         return {
-            "openid": oid,
-            "short": oid[:8],
+            "uid": uid,
+            "openid": openid,
+            "app_id": app_id,
+            "app_name": get_app_name(app_id),
+            "short": openid[:8],
             "nickname": nick,
             "messages": data["messages"],
             "pre_history": data["pre_history"],
@@ -336,31 +365,57 @@ async def _broadcast_sessions() -> None:
             "claimed_by": data.get("claimed_by", ""),
         }
 
-    items = await asyncio.gather(*[_item(oid, data) for oid, data in sessions.items()])
+    items = await asyncio.gather(*[_item(uid, data) for uid, data in sessions.items()])
     payload = json.dumps({"type": "sessions", "sessions": list(items)}, ensure_ascii=False)
     for ws, q in list(_ws_queues.items()):
         q.put_nowait(payload)
 
 
-def _get_or_create_ai_session(openid: str) -> str:
-    """获取或新建该 openid 的 AI 会话 session_id"""
-    if openid not in _ai_sessions:
-        _ai_sessions[openid] = f"ai_{int(time.time())}"
-    return _ai_sessions[openid]
+def _get_or_create_ai_session(uid: str) -> str:
+    """获取或新建该 uid 的 AI 会话 session_id"""
+    if uid not in _ai_sessions:
+        _ai_sessions[uid] = f"ai_{int(time.time())}"
+    return _ai_sessions[uid]
 
 
-def _reset_ai_session(openid: str) -> str:
+def _reset_ai_session(uid: str) -> str:
     """重置 AI 会话（用户转人工后，再回到AI时新建会话），返回旧 session_id"""
-    old = _ai_sessions.pop(openid, None)
+    old = _ai_sessions.pop(uid, None)
     return old or ""
 
 
 # ──────────────────────────────────────────
-# GET /webhook — 服务器验证（配置时微信调用一次）
+# 向后兼容路由：/webhook → /webhook/default
 # ──────────────────────────────────────────
 
 @app.get("/webhook")
+async def verify_server_compat(
+    signature: str = Query(...),
+    timestamp: str = Query(...),
+    nonce: str = Query(...),
+    echostr: str = Query(...),
+):
+    return await verify_server("default", signature, timestamp, nonce, echostr)
+
+
+@app.post("/webhook")
+async def receive_message_compat(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    msg_signature: str = Query(...),
+    timestamp: str = Query(...),
+    nonce: str = Query(...),
+):
+    return await receive_message("default", request, background_tasks, msg_signature, timestamp, nonce)
+
+
+# ──────────────────────────────────────────
+# GET /webhook/{app_slug} — 服务器验证（配置时微信调用一次）
+# ──────────────────────────────────────────
+
+@app.get("/webhook/{app_slug}")
 async def verify_server(
+    app_slug: str,
     signature: str = Query(...),
     timestamp: str = Query(...),
     nonce: str = Query(...),
@@ -370,20 +425,25 @@ async def verify_server(
     微信服务器配置验证
     验证成功原样返回 echostr，微信确认服务器有效
     """
+    crypto = _crypto_map.get(app_slug)
+    if not crypto:
+        logger.warning(f"[验签] 未知 app_slug={app_slug}")
+        return PlainTextResponse("forbidden", status_code=403)
     if crypto.verify_get(signature, timestamp, nonce):
-        logger.info("服务器验证成功")
+        logger.info(f"[验签] 成功 app_slug={app_slug}")
         return PlainTextResponse(echostr)
     else:
-        logger.warning("服务器验证失败，签名不匹配")
+        logger.warning(f"[验签] 失败 app_slug={app_slug}")
         return PlainTextResponse("forbidden", status_code=403)
 
 
 # ──────────────────────────────────────────
-# POST /webhook — 接收用户消息
+# POST /webhook/{app_slug} — 接收用户消息
 # ──────────────────────────────────────────
 
-@app.post("/webhook")
+@app.post("/webhook/{app_slug}")
 async def receive_message(
+    app_slug: str,
     request: Request,
     background_tasks: BackgroundTasks,
     msg_signature: str = Query(...),
@@ -400,6 +460,11 @@ async def receive_message(
     使用 FastAPI BackgroundTasks 而非 asyncio.create_task，
     确保在 SCF 云函数环境中任务能可靠完成。
     """
+    crypto = _crypto_map.get(app_slug)
+    if not crypto:
+        logger.warning(f"[接收消息] 未知 app_slug={app_slug}，忽略")
+        return PlainTextResponse("success")
+
     body = await request.body()
     body_xml = body.decode("utf-8")
 
@@ -407,60 +472,65 @@ async def receive_message(
     msg = crypto.decrypt_and_parse(body_xml, msg_signature, timestamp, nonce)
 
     if msg is None:
-        logger.warning("消息验签失败，忽略本次请求")
+        logger.warning(f"[接收消息] 消息验签失败 app_slug={app_slug}")
         return PlainTextResponse("success")
 
     msg_id = msg.get("MsgId", "")
     if msg_id:
-        if msg_id in _processed_msg_ids:
-            logger.info(f"重复消息忽略 MsgId={msg_id}")
+        dedup_key = f"{app_slug}:{msg_id}"
+        if dedup_key in _processed_msg_ids:
+            logger.info(f"重复消息忽略 MsgId={msg_id} app_slug={app_slug}")
             return PlainTextResponse("success")
         if len(_processed_msg_ids) >= _MSG_ID_MAX:
             _processed_msg_ids.clear()
-        _processed_msg_ids.add(msg_id)
+        _processed_msg_ids.add(dedup_key)
 
+    app_id = MINIAPPS[app_slug]["app_id"]
     msg_type = msg.get("MsgType", "")
     openid = msg.get("FromUserName", "")
 
-    logger.info(f"收到消息 | openid={openid[:8]}... | type={msg_type}")
+    logger.info(f"收到消息 | app_slug={app_slug} | openid={openid[:8]}... | type={msg_type}")
+
+    # 后台异步获取并缓存昵称（_get_nickname 已有幂等保护，有真实昵称则直接返回）
+    background_tasks.add_task(_get_nickname, app_id, openid)
 
     if msg_type == "text":
         user_text = msg.get("Content", "").strip()
 
         # 已在人工模式：缓冲消息，回复等待提示
-        if await is_human_mode(openid):
-            background_tasks.add_task(_handle_human_queue, openid, user_text)
+        if await is_human_mode(app_id, openid):
+            background_tasks.add_task(_handle_human_queue, app_id, openid, user_text)
             logger.info(f"[人工模式] 缓冲消息 openid={openid[:8]}...")
             return PlainTextResponse("success")
 
         # 用户主动请求转人工
         if needs_human(user_text):
-            background_tasks.add_task(_do_enter_human, openid, user_text)
+            background_tasks.add_task(_do_enter_human, app_id, openid, user_text)
             return PlainTextResponse("success")
 
         # 普通消息 → AI 处理
-        background_tasks.add_task(_handle_text, openid, user_text)
+        background_tasks.add_task(_handle_text, app_id, openid, user_text)
 
     elif msg_type == "event":
         event = msg.get("Event", "")
         if event == "user_enter_tempsession":
-            background_tasks.add_task(_send_welcome, openid)
+            background_tasks.add_task(_send_welcome, app_id, openid)
 
     elif msg_type == "image":
         pic_url = msg.get("PicUrl", "")
-        if await is_human_mode(openid):
+        if await is_human_mode(app_id, openid):
             # 人工模式：下载图片并推送给客服后台
-            background_tasks.add_task(_handle_human_image, openid, pic_url)
+            background_tasks.add_task(_handle_human_image, app_id, openid, pic_url)
         else:
             # AI 模式：暂不支持图片
             background_tasks.add_task(
-                send_text_message, openid, "您好，目前仅支持文字消息，请用文字描述您的问题 😊"
+                send_text_message, openid, "您好，目前仅支持文字消息，请用文字描述您的问题 😊", app_id
             )
 
     else:
         # 语音等其他类型暂不支持，友好提示
         background_tasks.add_task(
-            send_text_message, openid, "您好，目前仅支持文字消息，请用文字描述您的问题 😊"
+            send_text_message, openid, "您好，目前仅支持文字消息，请用文字描述您的问题 😊", app_id
         )
 
     # 必须立刻返回 "success"，否则微信会重试3次
@@ -473,19 +543,24 @@ async def receive_message(
 
 @app.get("/admin/sessions")
 async def admin_sessions(token: str = Query("")):
-    """返回所有人工模式会话的 JSON 列表"""
+    """返回所有人工模式会话的 JSON 列表（含小程序来源信息）"""
     if not _check_admin(token):
         return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
     try:
         sessions = await get_all_sessions()
     except Exception as e:
         logger.error(f"[admin_sessions] 获取会话失败: {e}")
-        sessions = {}   # 降级：返回空列表而非 500
-    async def _item(oid, data):
-        nick = await _get_nickname(oid)
+        sessions = {}
+    async def _item(uid, data):
+        app_id = data["app_id"]
+        openid = data["openid"]
+        nick = await _get_nickname(app_id, openid)
         return {
-            "openid": oid,
-            "short": oid[:8],
+            "uid": uid,
+            "openid": openid,
+            "app_id": app_id,
+            "app_name": get_app_name(app_id),
+            "short": openid[:8],
             "nickname": nick,
             "messages": data["messages"],
             "pre_history": data["pre_history"],
@@ -493,7 +568,7 @@ async def admin_sessions(token: str = Query("")):
             "claimed_by": data.get("claimed_by", ""),
         }
 
-    items = await asyncio.gather(*[_item(oid, data) for oid, data in sessions.items()])
+    items = await asyncio.gather(*[_item(uid, data) for uid, data in sessions.items()])
     return {"ok": True, "sessions": list(items)}
 
 
@@ -504,21 +579,22 @@ async def admin_reply(request: Request, token: str = Query("")):
         return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
     body = await request.json()
     openid = body.get("openid", "").strip()
+    app_id = body.get("app_id", "").strip()
     message = body.get("message", "").strip()
     agent_name = body.get("agent_name", "").strip()
-    if not openid or not message:
-        return JSONResponse({"ok": False, "error": "openid 和 message 不能为空"}, status_code=400)
-    claimer = get_claimer(openid)
+    if not openid or not app_id or not message:
+        return JSONResponse({"ok": False, "error": "openid、app_id 和 message 不能为空"}, status_code=400)
+    claimer = get_claimer(app_id, openid)
     if claimer and claimer != agent_name:
         return JSONResponse({"ok": False, "error": f"该会话已被 {claimer} 接入"}, status_code=403)
-    success = await send_text_message(openid, message)
+    success = await send_text_message(openid, message, app_id)
     if success:
-        logger.info(f"[人工回复] openid={openid[:8]}... agent={agent_name or '未知'}")
-        # 记录会话归属（首个回复者获得归属）
-        attribute_session(openid, agent_name)
-        session_id = _human_sessions.get(openid, f"human_{int(time.time())}")
-        await append_log(openid, "agent", message, time.time(), session_id, agent_name=agent_name)
-        await push_message(openid, message, role="agent")
+        logger.info(f"[人工回复] openid={openid[:8]}... agent={agent_name or '未知'} app_id={app_id}")
+        attribute_session(app_id, openid, agent_name)
+        uid = f"{app_id}:{openid}"
+        session_id = _human_sessions.get(uid, f"human_{int(time.time())}")
+        await append_log(app_id, openid, "agent", message, time.time(), session_id, agent_name=agent_name)
+        await push_message(app_id, openid, message, role="agent")
         await _broadcast_sessions()
         return {"ok": True}
     else:
@@ -532,15 +608,16 @@ async def admin_claim(request: Request, token: str = Query("")):
         return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
     body = await request.json()
     openid = body.get("openid", "").strip()
+    app_id = body.get("app_id", "").strip()
     agent_name = body.get("agent_name", "").strip()
-    if not openid or not agent_name:
-        return JSONResponse({"ok": False, "error": "openid 和 agent_name 不能为空"}, status_code=400)
-    success = claim_session(openid, agent_name)
+    if not openid or not app_id or not agent_name:
+        return JSONResponse({"ok": False, "error": "openid、app_id 和 agent_name 不能为空"}, status_code=400)
+    success = claim_session(app_id, openid, agent_name)
     if success:
         await _broadcast_sessions()
         return {"ok": True}
     else:
-        claimer = get_claimer(openid)
+        claimer = get_claimer(app_id, openid)
         return JSONResponse({"ok": False, "error": f"该会话已被 {claimer} 接入"}, status_code=409)
 
 
@@ -551,33 +628,33 @@ async def admin_close(request: Request, token: str = Query("")):
         return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
     body = await request.json()
     openid = body.get("openid", "").strip()
+    app_id = body.get("app_id", "").strip()
     agent_name = body.get("agent_name", "").strip()
-    if not openid:
-        return JSONResponse({"ok": False, "error": "openid 不能为空"}, status_code=400)
+    if not openid or not app_id:
+        return JSONResponse({"ok": False, "error": "openid 和 app_id 不能为空"}, status_code=400)
 
     # 关闭前收集统计数据
-    messages = get_session_queue(openid)
+    messages = get_session_queue(app_id, openid)
     user_msgs = sum(1 for m in messages if m.get("role") == "user")
     agent_msgs_count = sum(1 for m in messages if m.get("role") == "agent")
-    attribution = get_session_attribution(openid)
+    attribution = get_session_attribution(app_id, openid)
     final_agent_name = attribution.get("agent_name") or agent_name
     response_time = attribution.get("response_time")
 
-    await exit_human_mode(openid)
-    await send_text_message(openid, "感谢您的耐心等候，如有其他问题随时告诉我 😊")
+    await exit_human_mode(app_id, openid)
+    await send_text_message(openid, "感谢您的耐心等候，如有其他问题随时告诉我 😊", app_id)
     logger.info(f"[关闭会话] openid={openid[:8]}... 恢复 AI 模式 agent={final_agent_name or '未知'}")
 
-    # 写入统计（异步线程，不阻塞响应）
     asyncio.create_task(asyncio.to_thread(
         stats_service.record_session_close,
         final_agent_name, openid, user_msgs, agent_msgs_count, response_time,
     ))
 
-    # 结束人工会话日志
-    session_id = _human_sessions.pop(openid, None)
+    uid = f"{app_id}:{openid}"
+    session_id = _human_sessions.pop(uid, None)
     if session_id:
-        await end_chat_session(openid, session_id)
-    await _broadcast_sessions()  # 立即推送最新会话列表，避免已关闭会话在前端复现
+        await end_chat_session(app_id, openid, session_id)
+    await _broadcast_sessions()
     return {"ok": True}
 
 
@@ -588,37 +665,35 @@ async def admin_initiate_session(request: Request, token: str = Query("")):
         return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
     body = await request.json()
     openid     = body.get("openid", "").strip()
+    app_id     = body.get("app_id", "").strip()
     message    = body.get("message", "").strip()
     agent_name = body.get("agent_name", "").strip()
-    if not openid or not message:
-        return JSONResponse({"ok": False, "error": "openid 和 message 不能为空"}, status_code=400)
+    if not openid or not app_id or not message:
+        return JSONResponse({"ok": False, "error": "openid、app_id 和 message 不能为空"}, status_code=400)
 
-    # 若已被其他客服接入，拒绝
-    claimer = get_claimer(openid)
+    claimer = get_claimer(app_id, openid)
     if claimer and claimer != agent_name:
         return JSONResponse({"ok": False, "error": f"该用户已被 {claimer} 接入"}, status_code=409)
 
-    # 进入人工模式（幂等）并认领
-    await enter_human_mode(openid)
-    claim_session(openid, agent_name)
+    await enter_human_mode(app_id, openid)
+    claim_session(app_id, openid, agent_name)
 
-    # 发送消息（失败时回滚）
-    success = await send_text_message(openid, message)
+    success = await send_text_message(openid, message, app_id)
     if not success:
-        await exit_human_mode(openid)
+        await exit_human_mode(app_id, openid)
         return JSONResponse(
             {"ok": False, "error": "消息发送失败（用户可能超过48小时未互动）"},
             status_code=500,
         )
 
-    # 记录日志 & 广播
     session_id = f"human_{int(time.time())}"
-    _human_sessions[openid] = session_id
-    attribute_session(openid, agent_name)
-    await append_log(openid, "agent", message, time.time(), session_id, agent_name=agent_name)
-    await push_message(openid, message, role="agent")
+    uid = f"{app_id}:{openid}"
+    _human_sessions[uid] = session_id
+    attribute_session(app_id, openid, agent_name)
+    await append_log(app_id, openid, "agent", message, time.time(), session_id, agent_name=agent_name)
+    await push_message(app_id, openid, message, role="agent")
     await _broadcast_sessions()
-    logger.info(f"[主动发起] agent={agent_name} → openid={openid[:8]}")
+    logger.info(f"[主动发起] agent={agent_name} → openid={openid[:8]} app_id={app_id}")
     return {"ok": True}
 
 
@@ -626,18 +701,18 @@ async def admin_initiate_session(request: Request, token: str = Query("")):
 async def admin_reply_image(
     token: str = Query(""),
     openid: str = Form(...),
+    app_id: str = Form(...),
     image: UploadFile = File(...),
     agent_name: str = Form(""),
 ):
     """客服发送图片消息（multipart/form-data）"""
     if not _check_admin(token):
         return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
-    if not openid:
-        return JSONResponse({"ok": False, "error": "openid 不能为空"}, status_code=400)
+    if not openid or not app_id:
+        return JSONResponse({"ok": False, "error": "openid 和 app_id 不能为空"}, status_code=400)
     if not IMAGE_BASE_URL:
         return JSONResponse({"ok": False, "error": "IMAGE_BASE_URL 未配置"}, status_code=500)
 
-    # 推断扩展名
     ext = "jpg"
     if image.filename:
         suffix = image.filename.rsplit(".", 1)[-1].lower()
@@ -658,22 +733,21 @@ async def admin_reply_image(
 
     accessible_url = f"{IMAGE_BASE_URL.rstrip('/')}/{filename}"
 
-    # 上传微信临时素材并发送给用户
-    media_id = await get_or_upload_media(accessible_url)
+    media_id = await get_or_upload_media(accessible_url, app_id)
     if not media_id:
         return JSONResponse({"ok": False, "error": "微信素材上传失败"}, status_code=500)
 
-    success = await send_image_message(openid, media_id)
+    success = await send_image_message(openid, media_id, app_id)
     if not success:
         return JSONResponse({"ok": False, "error": "微信图片发送失败"}, status_code=500)
 
-    session_id = _human_sessions.get(openid, f"human_{int(time.time())}")
+    uid = f"{app_id}:{openid}"
+    session_id = _human_sessions.get(uid, f"human_{int(time.time())}")
     ts_now = time.time()
-    # 记录会话归属（首个图片回复也算接入）
-    attribute_session(openid, agent_name)
-    await append_log(openid, "agent", "", ts_now, session_id,
+    attribute_session(app_id, openid, agent_name)
+    await append_log(app_id, openid, "agent", "", ts_now, session_id,
                      image_url=accessible_url, msg_type="image", agent_name=agent_name)
-    await push_message(openid, text="", role="agent",
+    await push_message(app_id, openid, text="", role="agent",
                        image_url=accessible_url, msg_type="image")
     await _broadcast_sessions()
     logger.info(f"[admin_reply_image] 发送成功 openid={openid[:8]}... agent={agent_name or '未知'}")
@@ -742,12 +816,18 @@ async def admin_all_users(token: str = Query(""), agent_name: str = Query("")):
             users = [u for u in users if u["openid"] in served]
 
     async def fill_nickname(user: dict) -> dict:
-        if not user["nickname"]:
-            nick = await get_user_nickname(user["openid"])
-            new_user = {**user, "nickname": nick}
-            await update_nickname(user["openid"], nick)
-            return new_user
-        return user
+        openid = user["openid"]
+        cached = user.get("nickname", "")
+        # 已有真实昵称（非空且非 openid 前缀 fallback），直接返回
+        if cached and cached != openid[:8]:
+            return user
+        app_id = user.get("app_id", WECHAT_APP_ID)
+        nick = await get_user_nickname(openid, app_id)
+        # 只缓存真实昵称，跳过 fallback，保留下次重试机会
+        if nick and nick != openid[:8]:
+            await update_nickname(app_id, openid, nick)
+            return {**user, "nickname": nick}
+        return {**user, "nickname": ""}
 
     filled = await asyncio.gather(*[fill_nickname(u) for u in users])
     sorted_users = sorted(filled, key=lambda u: u["last_ts"], reverse=True)
@@ -755,18 +835,23 @@ async def admin_all_users(token: str = Query(""), agent_name: str = Query("")):
 
 
 @app.get("/admin/history/{openid}")
-async def admin_history(openid: str, token: str = Query("")):
+async def admin_history(openid: str, token: str = Query(""), app_id: str = Query("")):
     """返回指定用户的全量聊天记录（AI + 人工，从本地文件读取）"""
     if not _check_admin(token):
         return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+    if not app_id:
+        # 向后兼容：未传 app_id 时使用默认小程序
+        app_id = WECHAT_APP_ID or (list(MINIAPPS.values())[0]["app_id"] if MINIAPPS else "")
     try:
-        log = await get_user_log(openid)
+        log = await get_user_log(app_id, openid)
     except Exception as e:
         logger.error(f"[admin_history] 读取失败 openid={openid[:8]}: {e}")
         return JSONResponse({"ok": False, "error": "读取失败"}, status_code=500)
     return {
         "ok": True,
         "openid": openid,
+        "app_id": app_id,
+        "app_name": get_app_name(app_id),
         "nickname": log.get("nickname", ""),
         "sessions": log.get("sessions", []),
     }
@@ -855,7 +940,7 @@ async def admin_update_agent(username: str, request: Request, token: str = Query
         return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
     body = await request.json()
     new_password = body.get("password", "").strip()
-    new_is_admin = body.get("is_admin")  # None means don't change
+    new_is_admin = body.get("is_admin")
     if not new_password and new_is_admin is None:
         return JSONResponse({"ok": False, "error": "没有要修改的内容"}, status_code=400)
     async with _agents_lock:
@@ -1021,7 +1106,7 @@ async def admin_gray_set(request: Request, token: str = Query("")):
 # 辅助函数
 # ──────────────────────────────────────────
 
-def _build_transfer_xml(openid: str, timestamp: str, kf_account: str = "") -> str:
+def _build_transfer_xml(openid: str, app_id: str, timestamp: str, kf_account: str = "") -> str:
     """构建 transfer_customer_service 被动回复的内层 XML"""
     trans_info = ""
     if kf_account:
@@ -1029,7 +1114,7 @@ def _build_transfer_xml(openid: str, timestamp: str, kf_account: str = "") -> st
     return (
         f"<xml>"
         f"<ToUserName><![CDATA[{openid}]]></ToUserName>"
-        f"<FromUserName><![CDATA[{WECHAT_APP_ID}]]></FromUserName>"
+        f"<FromUserName><![CDATA[{app_id}]]></FromUserName>"
         f"<CreateTime>{timestamp}</CreateTime>"
         f"<MsgType><![CDATA[transfer_customer_service]]></MsgType>"
         f"{trans_info}"
@@ -1041,50 +1126,59 @@ def _build_transfer_xml(openid: str, timestamp: str, kf_account: str = "") -> st
 # 异步处理逻辑
 # ──────────────────────────────────────────
 
-async def _do_enter_human(openid: str, user_text: str) -> None:
+async def _do_enter_human(app_id: str, openid: str, user_text: str) -> None:
     """用户请求转人工：更新状态、通知用户、可选通知客服"""
-    pre_hist = get_history(openid)        # 清除前先取历史
-    await enter_human_mode(openid)
-    save_pre_history(openid, pre_hist)    # 保存转人工前对话
-    await push_message(openid, user_text) # 保存触发词本身
-    clear_history(openid)
+    pre_hist = get_history(app_id, openid)        # 清除前先取历史
+    await enter_human_mode(app_id, openid)
+    save_pre_history(app_id, openid, pre_hist)    # 保存转人工前对话
+    await push_message(app_id, openid, user_text) # 保存触发词本身
+    clear_history(app_id, openid)
 
     # 结束 AI 会话日志，开始人工会话日志
-    old_ai_session = _reset_ai_session(openid)
+    uid = f"{app_id}:{openid}"
+    old_ai_session = _reset_ai_session(uid)
     if old_ai_session:
-        await end_chat_session(openid, old_ai_session)
+        await end_chat_session(app_id, openid, old_ai_session)
     human_session_id = f"human_{int(time.time())}"
-    _human_sessions[openid] = human_session_id
+    _human_sessions[uid] = human_session_id
     ts_now = time.time()
-    await append_log(openid, "user", user_text, ts_now, human_session_id)
+    await append_log(app_id, openid, "user", user_text, ts_now, human_session_id)
     await send_text_message(
         openid,
         "好的，正在为您转接人工客服，请稍候。\n"
         "如暂无客服在线，我们会在工作时间（9:00-22:00）尽快联系您。",
+        app_id,
     )
-    if ADMIN_OPENID:
+    # 通知管理员（优先使用该小程序配置的 admin_openid）
+    app_cfg = next((cfg for cfg in MINIAPPS.values() if cfg["app_id"] == app_id), None)
+    notify_openid = (app_cfg or {}).get("admin_openid", "") or ADMIN_OPENID
+    if notify_openid:
+        app_name = get_app_name(app_id)
         await send_text_message(
-            ADMIN_OPENID,
+            notify_openid,
             f"🔔 新用户请求人工\n"
+            f"来源：{app_name}\n"
             f"用户：{openid[:8]}...\n"
             f"最新消息：「{user_text[:50]}」\n\n"
             f"请登录管理页处理。",
+            app_id,
         )
     else:
         logger.warning("[转人工] ADMIN_OPENID 未配置，管理员无法收到微信通知")
-    logger.info(f"[转人工] openid={openid[:8]}...")
+    logger.info(f"[转人工] openid={openid[:8]}... app_id={app_id}")
     await _broadcast_sessions()
 
 
-async def _handle_human_queue(openid: str, text: str) -> None:
+async def _handle_human_queue(app_id: str, openid: str, text: str) -> None:
     """人工模式下用户发消息：入队 + 记录日志"""
-    await push_message(openid, text)
-    session_id = _human_sessions.get(openid, f"human_{int(time.time())}")
-    await append_log(openid, "user", text, time.time(), session_id)
+    await push_message(app_id, openid, text)
+    uid = f"{app_id}:{openid}"
+    session_id = _human_sessions.get(uid, f"human_{int(time.time())}")
+    await append_log(app_id, openid, "user", text, time.time(), session_id)
     await _broadcast_sessions()
 
 
-async def _handle_human_image(openid: str, pic_url: str) -> None:
+async def _handle_human_image(app_id: str, openid: str, pic_url: str) -> None:
     """人工模式下用户发图片：下载到本地 → 推送后台"""
     if not IMAGE_BASE_URL or not pic_url:
         logger.warning(f"[human_image] IMAGE_BASE_URL 未配置或 pic_url 为空，跳过")
@@ -1106,72 +1200,70 @@ async def _handle_human_image(openid: str, pic_url: str) -> None:
         return
 
     accessible_url = f"{IMAGE_BASE_URL.rstrip('/')}/{filename}"
-    session_id = _human_sessions.get(openid, f"human_{int(time.time())}")
+    uid = f"{app_id}:{openid}"
+    session_id = _human_sessions.get(uid, f"human_{int(time.time())}")
     ts_now = time.time()
-    await push_message(openid, text="", role="user",
+    await push_message(app_id, openid, text="", role="user",
                        image_url=accessible_url, msg_type="image")
-    await append_log(openid, "user", "", ts_now, session_id,
+    await append_log(app_id, openid, "user", "", ts_now, session_id,
                      image_url=accessible_url, msg_type="image")
     await _broadcast_sessions()
     logger.info(f"[human_image] 已处理用户图片 openid={openid[:8]} url={accessible_url}")
 
 
-async def _handle_text(openid: str, text: str) -> None:
+async def _handle_text(app_id: str, openid: str, text: str) -> None:
     """处理用户文本消息"""
 
     # ── 灰度分组：human 组静默进入人工队列 ──────────────────────────────────
     from gray_service import get_or_assign
-    if get_or_assign(openid) == "human":
-        await enter_human_mode(openid)
-        await push_message(openid, text, "user")
+    if get_or_assign(app_id, openid) == "human":
+        await enter_human_mode(app_id, openid)
+        await push_message(app_id, openid, text, "user")
         await _broadcast_sessions()
         logger.info(f"[GRAY] {openid[:8]} → human queue")
         return
     # ────────────────────────────────────────────────────────────────────────
 
     # 发送"正在输入"提示（让用户知道消息已收到）
-    await send_typing_indicator(openid)
+    await send_typing_indicator(openid, app_id)
 
     # 调用 AI 生成回复（同时返回知识库命中的图片链接）
-    reply, image_urls = await get_ai_reply(openid, text)
+    reply, image_urls = await get_ai_reply(app_id, openid, text)
 
     # 写入结构化对话日志（同一 AI 对话共享同一 session_id）
-    session_id = _get_or_create_ai_session(openid)
+    uid = f"{app_id}:{openid}"
+    session_id = _get_or_create_ai_session(uid)
     ts_now = time.time()
-    await append_log(openid, "user", text, ts_now, session_id)
-    await append_log(openid, "ai", reply, ts_now + 0.001, session_id)
+    await append_log(app_id, openid, "user", text, ts_now, session_id)
+    await append_log(app_id, openid, "ai", reply, ts_now + 0.001, session_id)
 
     # 1. 先发文字回复
-    success = await send_text_message(openid, reply)
+    success = await send_text_message(openid, reply, app_id)
     if success:
         logger.info(f"[文字回复成功] openid={openid[:8]}...")
     else:
         logger.error(f"[文字回复失败] openid={openid[:8]}...")
 
-    # 2. 逐张发送图片（最多10张，支持多图知识库条目）
-    # 以下场景不发图：
-    # ① 回复含"转人工"升级提示
-    # ② AI 告知"没有相关信息，建议联系人工客服"（RAG误命中其他产品条目时的回退措辞）
-    # ③ 用户已进入人工模式（竞态：AI请求处理中用户转人工）
-    if "转人工" in reply or "人工客服" in reply or await is_human_mode(openid):
+    # 2. 逐张发送图片（最多10张）
+    if "转人工" in reply or "人工客服" in reply or await is_human_mode(app_id, openid):
         image_urls = []
     for url in image_urls[:10]:
         try:
-            media_id = await get_or_upload_media(url)
+            media_id = await get_or_upload_media(url, app_id)
             if media_id:
-                await send_image_message(openid, media_id)
+                await send_image_message(openid, media_id, app_id)
                 logger.info(f"[图片发送成功] openid={openid[:8]}...")
         except Exception as e:
             logger.error(f"[图片发送失败] {url} | {e}")
 
 
-async def _send_welcome(openid: str) -> None:
-    """用户进入客服对话时发送欢迎语（人工模式下跳过，避免客服主动发起时重复问候）"""
-    if await is_human_mode(openid):
+async def _send_welcome(app_id: str, openid: str) -> None:
+    """用户进入客服对话时发送欢迎语（人工模式下跳过）"""
+    if await is_human_mode(app_id, openid):
         return
     from gray_service import get_or_assign, get_config
     cfg = get_config()
-    if cfg.get("enabled") and get_or_assign(openid) == "human":
+    if cfg.get("enabled") and get_or_assign(app_id, openid) == "human":
         import datetime
         now_hour = datetime.datetime.now().hour
         in_work_hours = 9 <= now_hour < 22
@@ -1182,11 +1274,12 @@ async def _send_welcome(openid: str) -> None:
                 "您好！感谢您的联系，正在为您转接人工客服，请稍候。\n"
                 "如暂无客服在线，我们会在工作时间（9:00-22:00）尽快为您处理。"
             )
-        await send_text_message(openid, msg)
+        await send_text_message(openid, msg, app_id)
     else:
         await send_text_message(
             openid,
-            "您好！我是 AI 智能客服，很高兴为您服务 😊\n请问有什么可以帮助您的？"
+            "您好！我是 AI 智能客服，很高兴为您服务 😊\n请问有什么可以帮助您的？",
+            app_id,
         )
 
 
@@ -1196,4 +1289,11 @@ async def _send_welcome(openid: str) -> None:
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "微信小程序AI客服"}
+    return {
+        "status": "ok",
+        "service": "微信小程序AI客服",
+        "miniapps": [
+            {"slug": slug, "app_id": cfg["app_id"], "name": cfg["name"]}
+            for slug, cfg in MINIAPPS.items()
+        ],
+    }
