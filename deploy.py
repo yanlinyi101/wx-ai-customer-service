@@ -15,15 +15,15 @@ import tarfile
 import tempfile
 
 # ── 配置 ──────────────────────────────────────────────────────
-SSH_KEY    = os.getenv("SSH_KEY",    r"D:\小程序ai客服webhook\zm_pc1.pem")
-SSH_HOST   = os.getenv("SSH_HOST",   "root@YOUR_SERVER_IP")
+SSH_KEY    = os.getenv("SSH_KEY",    "/Users/xxx/Projects/AI客服/wx-ai-customer-service/deploy/zm_mac.pem")
+SSH_HOST   = os.getenv("SSH_HOST",   "root@118.25.104.84")
 REMOTE_DIR = os.getenv("REMOTE_DIR", "/opt/wechat-ai")
 LOCAL_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "wechat_ai_service")
 SERVICE    = os.getenv("SERVICE",    "wechat-ai")
 
 DEPLOY_FILES = [
     "main.py", "config.py", "ai_service.py", "rag_service.py",
-    "human_service.py", "wechat_api.py", "crypto.py",
+    "human_service.py", "gray_service.py", "wechat_api.py", "crypto.py",
     "chat_logger.py", "cos_logger.py", "kb_tool.py",
     "admin.html", "requirements.txt",
 ]

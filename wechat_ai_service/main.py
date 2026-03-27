@@ -385,6 +385,31 @@ def _reset_ai_session(uid: str) -> str:
 
 
 # ──────────────────────────────────────────
+# 向后兼容路由：/webhook → /webhook/default
+# ──────────────────────────────────────────
+
+@app.get("/webhook")
+async def verify_server_compat(
+    signature: str = Query(...),
+    timestamp: str = Query(...),
+    nonce: str = Query(...),
+    echostr: str = Query(...),
+):
+    return await verify_server("default", signature, timestamp, nonce, echostr)
+
+
+@app.post("/webhook")
+async def receive_message_compat(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    msg_signature: str = Query(...),
+    timestamp: str = Query(...),
+    nonce: str = Query(...),
+):
+    return await receive_message("default", request, background_tasks, msg_signature, timestamp, nonce)
+
+
+# ──────────────────────────────────────────
 # GET /webhook/{app_slug} — 服务器验证（配置时微信调用一次）
 # ──────────────────────────────────────────
 
