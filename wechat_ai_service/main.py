@@ -466,6 +466,9 @@ async def receive_message(
 
     logger.info(f"收到消息 | app_slug={app_slug} | openid={openid[:8]}... | type={msg_type}")
 
+    # 后台异步获取并缓存昵称（_get_nickname 已有幂等保护，有真实昵称则直接返回）
+    background_tasks.add_task(_get_nickname, app_id, openid)
+
     if msg_type == "text":
         user_text = msg.get("Content", "").strip()
 
@@ -788,13 +791,18 @@ async def admin_all_users(token: str = Query(""), agent_name: str = Query("")):
             users = [u for u in users if u["openid"] in served]
 
     async def fill_nickname(user: dict) -> dict:
-        if not user["nickname"]:
-            app_id = user.get("app_id", WECHAT_APP_ID)
-            nick = await get_user_nickname(user["openid"], app_id)
-            new_user = {**user, "nickname": nick}
-            await update_nickname(app_id, user["openid"], nick)
-            return new_user
-        return user
+        openid = user["openid"]
+        cached = user.get("nickname", "")
+        # 已有真实昵称（非空且非 openid 前缀 fallback），直接返回
+        if cached and cached != openid[:8]:
+            return user
+        app_id = user.get("app_id", WECHAT_APP_ID)
+        nick = await get_user_nickname(openid, app_id)
+        # 只缓存真实昵称，跳过 fallback，保留下次重试机会
+        if nick and nick != openid[:8]:
+            await update_nickname(app_id, openid, nick)
+            return {**user, "nickname": nick}
+        return {**user, "nickname": ""}
 
     filled = await asyncio.gather(*[fill_nickname(u) for u in users])
     sorted_users = sorted(filled, key=lambda u: u["last_ts"], reverse=True)
