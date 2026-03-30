@@ -321,21 +321,18 @@ async def _push_sessions_to_queue(queue: asyncio.Queue) -> None:
 
 
 async def _get_nickname(app_id: str, openid: str) -> str:
-    """获取用户昵称：优先读本地缓存，失败返回空串（不缓存 openid 前缀）"""
+    """获取用户昵称：优先读本地缓存，缓存 fallback 避免重复调用 API"""
     try:
         log = await get_user_log(app_id, openid)
         nick = log.get("nickname", "")
-        # 只有真实昵称（非 openid 前缀）才返回
-        if nick and nick != openid[:8]:
+        if nick:
             return nick
     except Exception:
         pass
     nick = await get_user_nickname(openid, app_id)
-    # 只缓存真实昵称，跳过 openid 前缀回退值
-    if nick and nick != openid[:8]:
+    if nick:
         await update_nickname(app_id, openid, nick)
-        return nick
-    return ""
+    return nick
 
 
 async def _broadcast_sessions() -> None:
@@ -595,7 +592,7 @@ async def admin_reply(request: Request, token: str = Query("")):
         session_id = _human_sessions.get(uid, f"human_{int(time.time())}")
         await append_log(app_id, openid, "agent", message, time.time(), session_id, agent_name=agent_name)
         await push_message(app_id, openid, message, role="agent")
-        await _broadcast_sessions()
+        asyncio.create_task(_broadcast_sessions())  # fire-and-forget，不阻塞响应
         return {"ok": True}
     else:
         return JSONResponse({"ok": False, "error": "发送失败"}, status_code=500)
@@ -816,18 +813,15 @@ async def admin_all_users(token: str = Query(""), agent_name: str = Query("")):
             users = [u for u in users if u["openid"] in served]
 
     async def fill_nickname(user: dict) -> dict:
-        openid = user["openid"]
-        cached = user.get("nickname", "")
-        # 已有真实昵称（非空且非 openid 前缀 fallback），直接返回
-        if cached and cached != openid[:8]:
+        if user.get("nickname"):
             return user
         app_id = user.get("app_id", WECHAT_APP_ID)
+        openid = user["openid"]
         nick = await get_user_nickname(openid, app_id)
-        # 只缓存真实昵称，跳过 fallback，保留下次重试机会
-        if nick and nick != openid[:8]:
+        if nick:
             await update_nickname(app_id, openid, nick)
             return {**user, "nickname": nick}
-        return {**user, "nickname": ""}
+        return user
 
     filled = await asyncio.gather(*[fill_nickname(u) for u in users])
     sorted_users = sorted(filled, key=lambda u: u["last_ts"], reverse=True)

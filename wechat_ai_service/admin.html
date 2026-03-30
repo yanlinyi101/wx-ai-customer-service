@@ -1583,7 +1583,7 @@ function enterApp() {
 // ── WebSocket ─────────────────────────────────────────────────────────────────
 function startBackupPolling() {
   if (httpFallbackTimer) return;
-  httpFallbackTimer = setInterval(loadSessions, 10000); // 10s 轮询
+  httpFallbackTimer = setInterval(loadSessions, 5000); // 5s 轮询
 }
 
 function connectWS() {
@@ -1603,6 +1603,7 @@ function connectWS() {
     wsReconnectDelay = 3000;
     setStatus('online', '已连接');
     clearTimeout(wsReconnectTimer);
+    loadSessions(); // 重连后立即刷新一次，不等 WS push
     startBackupPolling();
     thisWs._pingTimer = setInterval(() => {
       if (thisWs.readyState === WebSocket.OPEN) thisWs.send('ping');
@@ -1621,7 +1622,7 @@ function connectWS() {
     clearInterval(thisWs._pingTimer);
     if (ws !== thisWs) return;
     setStatus('', '重连中...');
-    wsReconnectDelay = Math.min(wsReconnectDelay * 1.5, 30000);
+    wsReconnectDelay = Math.min(wsReconnectDelay * 1.5, 10000); // 最长10s
     wsReconnectTimer = setTimeout(connectWS, wsReconnectDelay);
     startBackupPolling();
   };
@@ -1685,7 +1686,36 @@ function handleSessionsData(sessionsArr) {
     }
   }
 
-  sessions = newSessions;
+  // Bug 1 修复：检测我已接入但当前未查看的会话是否有新消息
+  if (agentOnline) {
+    for (const oid of Object.keys(newSessions)) {
+      if (!knownOpenids.has(oid)) continue;          // 跳过新会话（上面已处理）
+      if (oid === currentOpenid) continue;            // 当前正在查看，已自动刷新
+      const cur = newSessions[oid];
+      const old = sessions[oid];
+      if (!old || cur.count <= old.count) continue;  // 没有新消息
+      if (cur.claimed_by !== agentName) continue;    // 不是我接入的会话
+      // 我接入的会话有新消息但我没在看 → 触发提醒
+      playBeep();
+      showToast('💬 用户回复了消息');
+      document.title = '【新消息】客服管理后台';
+      setTimeout(() => { document.title = '客服管理后台'; }, 5000);
+      if ('Notification' in window && Notification.permission === 'granted') {
+        new Notification('💬 用户新消息', {
+          body: `${cur.nickname || (cur.short + '...')} 发来新消息`,
+          tag: `reply-${oid}`,
+          renotify: true,
+        });
+      }
+    }
+  }
+
+  // Bug 2A 修复：防止网络抖动导致空列表替换清空所有会话
+  if (sessionsArr.length > 0 || Object.keys(sessions).length === 0) {
+    sessions = newSessions;
+  } else {
+    console.warn('[sessions] 收到空列表，保留原有数据');
+  }
   knownOpenids = new Set(Object.keys(sessions));
   renderSessionList(newOids);
 
@@ -1962,12 +1992,16 @@ async function sendReply() {
   const btn = document.getElementById('send-btn');
   btn.disabled = true;
 
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10000);
   try {
     const res = await fetch(`${scfUrl}/admin/reply?token=${encodeURIComponent(token)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ openid: sessions[currentOpenid]?.openid || currentOpenid, app_id: sessions[currentOpenid]?.app_id || '', message: text, agent_name: agentName }),
+      signal: controller.signal,
     });
+    clearTimeout(timer);
     const data = await res.json();
     if (data.ok) {
       input.value = '';
@@ -1977,7 +2011,8 @@ async function sendReply() {
       showToast('发送失败：' + (data.error || '未知错误'));
     }
   } catch(e) {
-    showToast('网络错误，请重试');
+    clearTimeout(timer);
+    showToast(e.name === 'AbortError' ? '请求超时，请重试' : '网络错误，请重试');
   } finally {
     btn.disabled = false;
   }
