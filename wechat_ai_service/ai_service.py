@@ -136,9 +136,13 @@ async def get_ai_reply(app_id: str, openid: str, user_message: str) -> tuple[str
     context = ""
     top_score = INTENT_HIGH_THRESHOLD  # 默认值：RAG 未启用时不触发低置信度提示
     if RAG_ENABLED:
-        context, image_urls, top_score = retrieve(user_message)
+        # 合并最近用户消息，提升追问后的 RAG 命中率
+        history = get_history(app_id, openid)
+        recent_user_msgs = [m["content"] for m in history if m["role"] == "user"]
+        combined_query = " ".join(recent_user_msgs[-3:])
+        context, image_urls, top_score = retrieve(combined_query)
         intent = _classify_intent(top_score)
-        logger.info(f"[Intent] top_score={top_score:.1f} → {intent}")
+        logger.info(f"[Intent] top_score={top_score:.1f} → {intent} | query={combined_query[:60]}")
 
         if intent == "CLEAR":
             system = CLEAR_SYSTEM_PROMPT.format(context=context)
@@ -199,4 +203,8 @@ async def get_ai_reply(app_id: str, openid: str, user_message: str) -> tuple[str
     if reason:
         reply = reply + "\n\n" + _ESCALATION_HINTS[reason]
         image_urls = []  # 不确定时不发图片，避免发送错误图片
+    # AI 回复末尾以问号结尾说明正在追问，此时不发图片
+    if image_urls and reply.rstrip().endswith(("？", "?")):
+        image_urls = []
+        logger.info("[图片抑制] AI 追问中，暂不发图")
     return reply, image_urls
