@@ -112,6 +112,9 @@ _ai_sessions: dict[str, str] = {}
 _human_sessions: dict[str, str] = {}
 # 账号 CRUD 操作锁
 _agents_lock = asyncio.Lock()
+# 已关闭会话的 uid → 关闭时间戳，30s 内持续通知前端删除（时间到后自动淘汰）
+_recently_closed: dict[str, float] = {}
+_CLOSED_RETENTION = 30.0
 # 备注 CRUD 操作锁
 _notes_lock = asyncio.Lock()
 
@@ -363,7 +366,12 @@ async def _broadcast_sessions() -> None:
         }
 
     items = await asyncio.gather(*[_item(uid, data) for uid, data in sessions.items()])
-    payload = json.dumps({"type": "sessions", "sessions": list(items)}, ensure_ascii=False)
+    now = time.time()
+    removed = [uid for uid, ts in list(_recently_closed.items()) if now - ts < _CLOSED_RETENTION]
+    # 淘汰过期条目
+    for uid in [uid for uid, ts in list(_recently_closed.items()) if now - ts >= _CLOSED_RETENTION]:
+        _recently_closed.pop(uid, None)
+    payload = json.dumps({"type": "sessions", "sessions": list(items), "removed_uids": removed}, ensure_ascii=False)
     for ws, q in list(_ws_queues.items()):
         q.put_nowait(payload)
 
@@ -500,6 +508,13 @@ async def receive_message(
             logger.info(f"[人工模式] 缓冲消息 openid={openid[:8]}...")
             return PlainTextResponse("success")
 
+        # 已被客服认领但服务重启后 human_mode 丢失：自动恢复人工模式并缓冲消息
+        if get_claimer(app_id, openid):
+            await enter_human_mode(app_id, openid)
+            background_tasks.add_task(_handle_human_queue, app_id, openid, user_text)
+            logger.info(f"[认领恢复] 重新进入人工模式 openid={openid[:8]}...")
+            return PlainTextResponse("success")
+
         # 用户主动请求转人工
         if needs_human(user_text):
             background_tasks.add_task(_do_enter_human, app_id, openid, user_text)
@@ -566,7 +581,9 @@ async def admin_sessions(token: str = Query("")):
         }
 
     items = await asyncio.gather(*[_item(uid, data) for uid, data in sessions.items()])
-    return {"ok": True, "sessions": list(items)}
+    now = time.time()
+    removed = [uid for uid, ts in list(_recently_closed.items()) if now - ts < _CLOSED_RETENTION]
+    return {"ok": True, "sessions": list(items), "removed_uids": removed}
 
 
 @app.post("/admin/reply")
@@ -609,6 +626,8 @@ async def admin_claim(request: Request, token: str = Query("")):
     agent_name = body.get("agent_name", "").strip()
     if not openid or not app_id or not agent_name:
         return JSONResponse({"ok": False, "error": "openid、app_id 和 agent_name 不能为空"}, status_code=400)
+    if not await is_human_mode(app_id, openid):
+        return JSONResponse({"ok": False, "error": "该用户未主动发起人工服务请求"}, status_code=400)
     success = claim_session(app_id, openid, agent_name)
     if success:
         await _broadcast_sessions()
@@ -651,6 +670,7 @@ async def admin_close(request: Request, token: str = Query("")):
     session_id = _human_sessions.pop(uid, None)
     if session_id:
         await end_chat_session(app_id, openid, session_id)
+    _recently_closed[uid] = time.time()  # 通知前端从本地缓存中删除该会话
     await _broadcast_sessions()
     return {"ok": True}
 
@@ -777,18 +797,11 @@ async def admin_search(
     date_from_ts = _parse_date(date_from) if date_from else 0.0
     date_to_ts = _parse_date(date_to, end=True) if date_to else float("inf")
 
-    allowed = None
-    if agent_name:
-        agents = await asyncio.to_thread(load_agents)
-        agent_rec = next((a for a in agents if a.get("username") == agent_name), None)
-        if agent_rec and not agent_rec.get("is_admin", False):
-            allowed = set(stats_service.get_agent_served_openids(agent_name))
-
     results = await search_logs(
         q=q,
         date_from_ts=date_from_ts,
         date_to_ts=date_to_ts,
-        allowed_openids=allowed,
+        allowed_openids=None,
     )
     return {"ok": True, "results": results, "count": len(results)}
 
@@ -1140,7 +1153,7 @@ async def _do_enter_human(app_id: str, openid: str, user_text: str) -> None:
     await send_text_message(
         openid,
         "好的，正在为您转接人工客服，请稍候。\n"
-        "如暂无客服在线，我们会在工作时间（9:00-22:00）尽快联系您。",
+        "如暂无客服在线，我们会在工作时间（9:00-21:00）尽快联系您。",
         app_id,
     )
     # 通知管理员（优先使用该小程序配置的 admin_openid）
@@ -1266,7 +1279,7 @@ async def _send_welcome(app_id: str, openid: str) -> None:
         else:
             msg = (
                 "您好！感谢您的联系，正在为您转接人工客服，请稍候。\n"
-                "如暂无客服在线，我们会在工作时间（9:00-22:00）尽快为您处理。"
+                "如暂无客服在线，我们会在工作时间（9:00-21:00）尽快为您处理。"
             )
         await send_text_message(openid, msg, app_id)
     else:
