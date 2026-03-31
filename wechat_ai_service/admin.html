@@ -1325,6 +1325,22 @@ body {
       </label>
     </div>
 
+    <!-- 提示音音量 -->
+    <div style="background:var(--bg-panel);border:1px solid var(--border);border-radius:var(--r);padding:20px 24px;margin-bottom:16px;">
+      <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:14px;">提示音音量</div>
+      <div style="display:flex;align-items:center;gap:14px;">
+        <span style="font-size:18px;">🔈</span>
+        <input type="range" min="0" max="1" step="0.05"
+          style="flex:1;accent-color:var(--blue);cursor:pointer;"
+          oninput="saveBeepVolume(this.value)"
+          onmousedown="if(!_audioCtx){_audioCtx=new(window.AudioContext||window.webkitAudioContext)()}"
+          id="beep-volume-slider">
+        <span style="font-size:18px;">🔊</span>
+        <span id="beep-volume-label" style="font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text-2);min-width:36px;text-align:right;"></span>
+        <button onclick="playBeep()" style="font-size:11px;padding:4px 12px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text-2);cursor:pointer;">测试</button>
+      </div>
+    </div>
+
     <!-- 灰度测试 -->
     <div id="gray-section-wrap">
     <div style="background:var(--bg-panel);border:1px solid var(--border);border-radius:var(--r);padding:20px 24px;">
@@ -1411,6 +1427,8 @@ let scfUrl = '';
 let token = '';
 let agentName = '';
 let agentOnline = false;
+let _audioCtx = null;
+let beepVolume = parseFloat(localStorage.getItem('beep_volume') ?? '0.8');
 let isAdmin = false;
 let statsVisible = false;
 let currentOpenid = null;
@@ -1614,7 +1632,7 @@ function connectWS() {
     if (evt.data === 'pong') return;
     try {
       const msg = JSON.parse(evt.data);
-      if (msg.type === 'sessions') handleSessionsData(msg.sessions);
+      if (msg.type === 'sessions') handleSessionsData(msg.sessions, msg.removed_uids || []);
     } catch(e) {}
   };
 
@@ -1637,21 +1655,47 @@ function setStatus(dotClass, text) {
 
 function playBeep() {
   try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.type = 'sine';
-    osc.frequency.value = 880;
-    gain.gain.setValueAtTime(0.4, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.6);
-    osc.start(ctx.currentTime);
-    osc.stop(ctx.currentTime + 0.6);
+    if (!_audioCtx) _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const _play = () => {
+      const osc = _audioCtx.createOscillator();
+      const gain = _audioCtx.createGain();
+      osc.connect(gain);
+      gain.connect(_audioCtx.destination);
+      osc.type = 'sine';
+      osc.frequency.value = 880;
+      const vol = Math.max(0.001, beepVolume);
+      gain.gain.setValueAtTime(vol, _audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, _audioCtx.currentTime + 0.6);
+      osc.start(_audioCtx.currentTime);
+      osc.stop(_audioCtx.currentTime + 0.6);
+    };
+    if (_audioCtx.state === 'suspended') {
+      _audioCtx.resume().then(_play);
+    } else {
+      _play();
+    }
   } catch(e) {}
 }
 
-function handleSessionsData(sessionsArr) {
+function saveBeepVolume(val) {
+  beepVolume = parseFloat(val);
+  localStorage.setItem('beep_volume', beepVolume);
+  document.getElementById('beep-volume-label').textContent = Math.round(beepVolume * 100) + '%';
+  playBeep();
+}
+
+function handleSessionsData(sessionsArr, removedUids = []) {
+  // 先处理已关闭的会话：从本地缓存中删除，不再显示
+  for (const uid of removedUids) {
+    delete sessions[uid];
+    knownOpenids.delete(uid);
+    if (currentOpenid === uid) {
+      currentOpenid = null;
+      currentHistory = null;
+      showChatPanel(false);
+    }
+  }
+
   const newSessions = {};
   for (const s of sessionsArr) newSessions[s.uid || s.openid] = s;
 
@@ -1686,40 +1730,47 @@ function handleSessionsData(sessionsArr) {
     }
   }
 
-  // Bug 1 修复：检测我已接入但当前未查看的会话是否有新消息
-  if (agentOnline) {
-    for (const oid of Object.keys(newSessions)) {
-      if (!knownOpenids.has(oid)) continue;          // 跳过新会话（上面已处理）
-      if (oid === currentOpenid) continue;            // 当前正在查看，已自动刷新
-      const cur = newSessions[oid];
-      const old = sessions[oid];
-      if (!old || cur.count <= old.count) continue;  // 没有新消息
-      if (cur.claimed_by !== agentName) continue;    // 不是我接入的会话
-      // 我接入的会话有新消息但我没在看 → 触发提醒
-      playBeep();
-      showToast('💬 用户回复了消息');
-      document.title = '【新消息】客服管理后台';
-      setTimeout(() => { document.title = '客服管理后台'; }, 5000);
-      if ('Notification' in window && Notification.permission === 'granted') {
-        new Notification('💬 用户新消息', {
-          body: `${cur.nickname || (cur.short + '...')} 发来新消息`,
-          tag: `reply-${oid}`,
-          renotify: true,
-        });
-      }
+  // 检测我已接入但当前未查看的会话是否有新消息（不依赖 agentOnline，已接入的会话始终提醒）
+  for (const oid of Object.keys(newSessions)) {
+    const cur = newSessions[oid];
+    const old = sessions[oid];
+    console.log('[通知检查]', {
+      oid: oid.slice(0, 12),
+      inKnown: knownOpenids.has(oid),
+      isCurrent: oid === currentOpenid,
+      curCount: cur.count, oldCount: old?.count,
+      claimedBy: JSON.stringify(cur.claimed_by),
+      agentName: JSON.stringify(agentName),
+      claimMatch: cur.claimed_by === agentName,
+    });
+    if (!knownOpenids.has(oid)) continue;          // 跳过新会话（上面已处理）
+    if (!old || cur.count <= old.count) continue;  // 没有新消息
+    if (cur.claimed_by !== agentName) continue;    // 不是我接入的会话
+    // 我接入的会话有新消息但我没在看 → 触发提醒
+    console.log('[提醒触发] playBeep', oid.slice(0, 12), 'count', old?.count, '->', cur.count);
+    playBeep();
+    showToast('💬 用户回复了消息');
+    document.title = '【新消息】客服管理后台';
+    setTimeout(() => { document.title = '客服管理后台'; }, 5000);
+    if ('Notification' in window && Notification.permission === 'granted') {
+      new Notification('💬 用户新消息', {
+        body: `${cur.nickname || (cur.short + '...')} 发来新消息`,
+        tag: `reply-${oid}`,
+        renotify: true,
+      });
     }
   }
 
-  // Bug 2A 修复：防止网络抖动导致空列表替换清空所有会话
-  if (sessionsArr.length > 0 || Object.keys(sessions).length === 0) {
-    sessions = newSessions;
-  } else {
-    console.warn('[sessions] 收到空列表，保留原有数据');
+  // 持久化：只新增/更新会话，永不整体替换（防止网络抖动或服务端返回部分数据导致会话消失）
+  for (const [oid, data] of Object.entries(newSessions)) {
+    sessions[oid] = data;
   }
-  knownOpenids = new Set(Object.keys(sessions));
-  renderSessionList(newOids);
-
+  for (const oid of Object.keys(newSessions)) {
+    knownOpenids.add(oid);
+  }
+  // 仅在等待中 tab 更新会话列表，避免轮询覆盖历史记录 tab 的渲染内容
   if (currentTab === 'waiting') {
+    renderSessionList(newOids);
     if (currentOpenid && !sessions[currentOpenid]) {
       currentOpenid = null;
       currentHistory = null;
@@ -1752,7 +1803,7 @@ async function loadSessions() {
     if (res.ok) {
       if (!ws || ws.readyState !== WebSocket.OPEN) setStatus('online', '已连接(HTTP)');
       const data = await res.json();
-      if (data.ok) handleSessionsData(data.sessions);
+      if (data.ok) handleSessionsData(data.sessions, data.removed_uids || []);
     } else if (res.status === 401) {
       setStatus('', '令牌错误');
     } else {
@@ -1813,8 +1864,7 @@ function renderSessionList(newOids) {
   for (const oid of keys) {
     const s = sessions[oid];
     const claimedBy = s.claimed_by || '';
-    // 已被其他客服接入的会话，不显示在当前账号的等待列表中
-    if (claimedBy && claimedBy !== agentName) continue;
+    // 所有会话均显示，状态标签区分（已接入: 客服X / 等待接入）
     const isNew = newOids && newOids.includes(oid);
     const allMsgs = s.messages || [];
     const lastMsgObj = allMsgs.length > 0 ? allMsgs[allMsgs.length - 1] : null;
@@ -2217,6 +2267,9 @@ function toggleSettings() {
   document.getElementById('settings-main').style.display = settingsVisible ? 'flex' : 'none';
   if (settingsVisible) {
     applySendMode(sendMode);   // 同步单选框
+    const slider = document.getElementById('beep-volume-slider');
+    if (slider) { slider.value = beepVolume; }
+    document.getElementById('beep-volume-label').textContent = Math.round(beepVolume * 100) + '%';
     startGrayPolling();
   } else {
     stopGrayPolling();
@@ -2456,9 +2509,8 @@ async function fetchAllUsers() {
   const list = document.getElementById('session-list');
   list.innerHTML = `<div id="empty-sessions" style="display:block">加载中...</div>`;
   try {
-    const agentParam = isAdmin ? '' : `&agent_name=${encodeURIComponent(agentName)}`;
     const res = await fetch(
-      `${scfUrl}/admin/all_users?token=${encodeURIComponent(token)}${agentParam}`,
+      `${scfUrl}/admin/all_users?token=${encodeURIComponent(token)}`,
       { signal: AbortSignal.timeout(20000) }
     );
     if (res.ok) {

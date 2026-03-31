@@ -204,7 +204,7 @@ def compute_stats_for_range(log_dir: str, start_ts: float, end_ts: float) -> dic
     within_3min = 0
     agents: dict = {}
 
-    for file in log_path.glob("*.json"):
+    for file in log_path.glob("**/*.json"):
         try:
             with open(file, "r", encoding="utf-8") as f:
                 user_data = json.load(f)
@@ -306,7 +306,7 @@ def rebuild_from_logs(log_dir: str) -> None:
     overall = new_data["overall"]
     agents = new_data["agents"]
 
-    for file in log_path.glob("*.json"):
+    for file in log_path.glob("**/*.json"):
         try:
             with open(file, "r", encoding="utf-8") as f:
                 user_data = json.load(f)
