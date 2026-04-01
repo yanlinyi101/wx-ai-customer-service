@@ -111,17 +111,18 @@ def _score(query: str, entry: dict) -> float:
 # 检索入口
 # ──────────────────────────────────────────
 
-def retrieve(query: str) -> tuple[str, list[str], float]:
+def retrieve(query: str) -> tuple[str, list[str], float, float]:
     """
     根据用户问题检索知识库。
     返回：
-      - context_text: 注入 AI 提示词的参考内容（str）
-      - image_urls:   命中条目中的图片链接列表（list[str]），可为空
-      - top_score:    最高相关性分数（float），用于意图路由；无命中时为 0.0
+      - context_text:  注入 AI 提示词的参考内容（str）
+      - image_urls:    命中条目中的图片链接列表（list[str]），可为空
+      - top_score:     最高相关性分数（float），用于意图路由；无命中时为 0.0
+      - second_score:  次高相关性分数（float），用于判断查询是否模糊；无次高时为 0.0
     """
     kb = get_kb()
     if not kb:
-        return "", [], 0.0
+        return "", [], 0.0, 0.0
 
     scored = [
         (entry, _score(query, entry))
@@ -130,11 +131,12 @@ def retrieve(query: str) -> tuple[str, list[str], float]:
     scored.sort(key=lambda x: x[1], reverse=True)
 
     top_score = scored[0][1] if scored else 0.0
+    second_score = scored[1][1] if len(scored) > 1 else 0.0
 
     scored = [(e, s) for e, s in scored if s >= RAG_MIN_SCORE]
     top = scored[:RAG_TOP_K]
     if not top:
-        return "", [], top_score
+        return "", [], top_score, second_score
 
     lines = []
     image_urls = []
@@ -152,4 +154,4 @@ def retrieve(query: str) -> tuple[str, list[str], float]:
             urls = [single]
     image_urls.extend(urls)
 
-    return "\n\n---\n\n".join(lines), image_urls, top_score
+    return "\n\n---\n\n".join(lines), image_urls, top_score, second_score

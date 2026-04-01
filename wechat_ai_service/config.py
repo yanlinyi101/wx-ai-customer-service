@@ -71,6 +71,7 @@ RAG_MIN_SCORE = float(os.getenv("RAG_MIN_SCORE", "1.0"))  # 最低相关性分�
 # ─────────────────────────────────────────────
 INTENT_LOW_THRESHOLD  = float(os.getenv("INTENT_LOW_THRESHOLD",  "2.0"))  # < 2.0 → 闲聊
 INTENT_HIGH_THRESHOLD = float(os.getenv("INTENT_HIGH_THRESHOLD", "4.0"))  # ≥ 4.0 → 明确问题
+INTENT_GAP_THRESHOLD  = float(os.getenv("INTENT_GAP_THRESHOLD",  "2.5"))  # top-1 与 top-2 分差 < 2.5 → 降级为模糊
 
 # ─────────────────────────────────────────────
 # 三套意图系统提示词
