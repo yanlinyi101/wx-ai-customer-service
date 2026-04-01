@@ -33,6 +33,7 @@ from config import (
     RAG_ENABLED,
     INTENT_LOW_THRESHOLD,
     INTENT_HIGH_THRESHOLD,
+    INTENT_GAP_THRESHOLD,
     CHAT_SYSTEM_PROMPT,
     VAGUE_SYSTEM_PROMPT,
     CLEAR_SYSTEM_PROMPT,
@@ -111,12 +112,14 @@ def check_escalation(app_id: str, openid: str, text: str, top_score: float) -> s
 # 调用 AI 生成回复
 # ──────────────────────────────────────────
 
-def _classify_intent(top_score: float) -> str:
-    """根据 RAG top_score 判断用户意图类型"""
+def _classify_intent(top_score: float, second_score: float = 0.0) -> str:
+    """根据 RAG top_score 和 second_score 判断用户意图类型"""
     if top_score < INTENT_LOW_THRESHOLD:
         return "CHAT"
     elif top_score < INTENT_HIGH_THRESHOLD:
         return "VAGUE"
+    elif top_score - second_score < INTENT_GAP_THRESHOLD:
+        return "VAGUE"  # 多条目竞争，查询模糊，降级追问
     else:
         return "CLEAR"
 
@@ -140,8 +143,8 @@ async def get_ai_reply(app_id: str, openid: str, user_message: str) -> tuple[str
         history = get_history(app_id, openid)
         recent_user_msgs = [m["content"] for m in history if m["role"] == "user"]
         combined_query = " ".join(recent_user_msgs[-3:])
-        context, image_urls, top_score = retrieve(combined_query)
-        intent = _classify_intent(top_score)
+        context, image_urls, top_score, second_score = retrieve(combined_query)
+        intent = _classify_intent(top_score, second_score)
         logger.info(f"[Intent] top_score={top_score:.1f} → {intent} | query={combined_query[:60]}")
 
         if intent == "CLEAR":
