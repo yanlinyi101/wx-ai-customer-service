@@ -30,7 +30,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 from ai_service import get_ai_reply, needs_human, clear_history, get_history
-from chat_logger import append_log, end_session as end_chat_session, get_user_log, list_all_users, update_nickname, search_logs
+from chat_logger import append_log, append_timeout_marker, end_session as end_chat_session, get_user_log, list_all_users, update_nickname, search_logs
 import stats_service
 from config import (
     WECHAT_APP_ID,
@@ -63,6 +63,8 @@ from human_service import (
     claim_session,
     get_claimer,
     clear_claim,
+    set_claim_online,
+    get_claim_online,
 )
 from wechat_api import (
     download_user_image,
@@ -159,6 +161,16 @@ async def _auto_close_idle_sessions() -> None:
                 logger.info(f"[无人接入] 3分钟无客服接入，转回AI openid={openid[:8]}")
                 messages = get_session_queue(app_id, openid)
                 user_msgs = sum(1 for m in messages if m.get("role") == "user")
+                # 获取当前在线客服，计入各自的 missed_count
+                agents_list = await asyncio.to_thread(load_agents)
+                online_agents = [a["username"] for a in agents_list if a.get("online")]
+                session_id = _human_sessions.get(uid)
+                if session_id and online_agents:
+                    asyncio.create_task(append_timeout_marker(app_id, openid, session_id, online_agents))
+                if online_agents:
+                    asyncio.create_task(asyncio.to_thread(
+                        stats_service.record_missed_sessions, online_agents, openid,
+                    ))
                 asyncio.create_task(asyncio.to_thread(
                     stats_service.record_session_close,
                     "", openid, user_msgs, 0, None,
@@ -172,7 +184,7 @@ async def _auto_close_idle_sessions() -> None:
                     "如需人工客服，请再次发送\"人工\"。",
                     app_id,
                 )
-                session_id = _human_sessions.pop(uid, None)
+                _human_sessions.pop(uid, None)
                 if session_id:
                     await end_chat_session(app_id, openid, session_id)
                 changed = True
@@ -192,6 +204,7 @@ async def _auto_close_idle_sessions() -> None:
                     attribution.get("agent_name") or "",
                     openid, user_msgs, agent_msgs_count,
                     attribution.get("response_time"),
+                    attribution.get("agent_was_online", True),
                 ))
                 await exit_human_mode(app_id, openid)
                 await send_text_message(
@@ -604,10 +617,13 @@ async def admin_reply(request: Request, token: str = Query("")):
     success = await send_text_message(openid, message, app_id)
     if success:
         logger.info(f"[人工回复] openid={openid[:8]}... agent={agent_name or '未知'} app_id={app_id}")
-        attribute_session(app_id, openid, agent_name)
+        rt = attribute_session(app_id, openid, agent_name)
+        # 首次回复时记录在线状态到日志，供历史统计过滤
+        agent_online_flag = get_claim_online(app_id, openid) if rt is not None else None
         uid = f"{app_id}:{openid}"
         session_id = _human_sessions.get(uid, f"human_{int(time.time())}")
-        await append_log(app_id, openid, "agent", message, time.time(), session_id, agent_name=agent_name)
+        await append_log(app_id, openid, "agent", message, time.time(), session_id,
+                         agent_name=agent_name, agent_online=agent_online_flag)
         await push_message(app_id, openid, message, role="agent")
         asyncio.create_task(_broadcast_sessions())  # fire-and-forget，不阻塞响应
         return {"ok": True}
@@ -630,6 +646,11 @@ async def admin_claim(request: Request, token: str = Query("")):
         return JSONResponse({"ok": False, "error": "该用户未主动发起人工服务请求"}, status_code=400)
     success = claim_session(app_id, openid, agent_name)
     if success:
+        # 记录接入时客服的在线状态，并立即计入接入数
+        agents_list = await asyncio.to_thread(load_agents)
+        is_online = next((bool(a.get("online")) for a in agents_list if a.get("username") == agent_name), False)
+        set_claim_online(app_id, openid, is_online)
+        asyncio.create_task(asyncio.to_thread(stats_service.record_session_claim, agent_name, openid))
         await _broadcast_sessions()
         return {"ok": True}
     else:
@@ -656,6 +677,7 @@ async def admin_close(request: Request, token: str = Query("")):
     attribution = get_session_attribution(app_id, openid)
     final_agent_name = attribution.get("agent_name") or agent_name
     response_time = attribution.get("response_time")
+    agent_was_online = attribution.get("agent_was_online", True)
 
     await exit_human_mode(app_id, openid)
     await send_text_message(openid, "感谢您的耐心等候，如有其他问题随时告诉我 😊", app_id)
@@ -663,7 +685,7 @@ async def admin_close(request: Request, token: str = Query("")):
 
     asyncio.create_task(asyncio.to_thread(
         stats_service.record_session_close,
-        final_agent_name, openid, user_msgs, agent_msgs_count, response_time,
+        final_agent_name, openid, user_msgs, agent_msgs_count, response_time, agent_was_online,
     ))
 
     uid = f"{app_id}:{openid}"

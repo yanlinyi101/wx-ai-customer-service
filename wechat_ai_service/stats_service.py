@@ -20,7 +20,9 @@ stats.json 结构:
       "user_messages": 0,
       "agent_messages": 0,
       "total_response_time": 0.0,
-      "responded_count": 0
+      "responded_count": 0,
+      "claimed_count": 0,        # 成功接入数（接入时立即计入）
+      "missed_count": 0          # 值班时错过数（3分钟超时时计入）
     }
   }
 }
@@ -75,16 +77,34 @@ def _save_sync(data: dict) -> None:
     tmp.replace(STATS_FILE)
 
 
+def _ensure_agent(agents: dict, agent_name: str) -> dict:
+    """确保 agents 中存在该客服条目，返回其 dict"""
+    if agent_name not in agents:
+        agents[agent_name] = {
+            "sessions": 0,
+            "openids": [],
+            "user_messages": 0,
+            "agent_messages": 0,
+            "total_response_time": 0.0,
+            "responded_count": 0,
+            "claimed_count": 0,
+            "missed_count": 0,
+        }
+    return agents[agent_name]
+
+
 def record_session_close(
     agent_name: str,
     openid: str,
     user_msgs: int,
     agent_msgs: int,
     response_time_sec: float | None,
+    agent_was_online: bool = True,
 ) -> None:
     """
     会话关闭时更新统计数据（线程安全）。
     agent_name 为空时不计入 agents 统计，但仍更新 overall。
+    agent_was_online: 接入时客服是否在线；False 时应答时长不计入统计。
     """
     with _lock:
         try:
@@ -103,7 +123,7 @@ def record_session_close(
                 overall["responded_openids"].append(openid)
                 overall["responded_users"] += 1
 
-            if response_time_sec is not None:
+            if response_time_sec is not None and agent_was_online:
                 overall["total_response_time"] += response_time_sec
                 overall["responded_count"] += 1
                 if response_time_sec <= 180:
@@ -111,28 +131,46 @@ def record_session_close(
 
             # agent 统计
             if agent_name:
-                if agent_name not in agents:
-                    agents[agent_name] = {
-                        "sessions": 0,
-                        "openids": [],
-                        "user_messages": 0,
-                        "agent_messages": 0,
-                        "total_response_time": 0.0,
-                        "responded_count": 0,
-                    }
-                ag = agents[agent_name]
+                ag = _ensure_agent(agents, agent_name)
                 ag["sessions"] += 1
                 if openid not in ag["openids"]:
                     ag["openids"].append(openid)
                 ag["user_messages"] += user_msgs
                 ag["agent_messages"] += agent_msgs
-                if response_time_sec is not None:
+                if response_time_sec is not None and agent_was_online:
                     ag["total_response_time"] += response_time_sec
                     ag["responded_count"] += 1
 
             _save_sync(data)
         except Exception as e:
             logger.error(f"[stats_service] record_session_close 失败: {e}")
+
+
+def record_session_claim(agent_name: str, openid: str) -> None:
+    """客服成功接入会话时调用，增加该客服的 claimed_count（线程安全）。"""
+    with _lock:
+        try:
+            data = _load_sync()
+            ag = _ensure_agent(data["agents"], agent_name)
+            ag["claimed_count"] = ag.get("claimed_count", 0) + 1
+            _save_sync(data)
+        except Exception as e:
+            logger.error(f"[stats_service] record_session_claim 失败: {e}")
+
+
+def record_missed_sessions(agent_names: list[str], openid: str) -> None:
+    """3分钟超时时，为当时在线的所有客服增加 missed_count（线程安全）。"""
+    if not agent_names:
+        return
+    with _lock:
+        try:
+            data = _load_sync()
+            for name in agent_names:
+                ag = _ensure_agent(data["agents"], name)
+                ag["missed_count"] = ag.get("missed_count", 0) + 1
+            _save_sync(data)
+        except Exception as e:
+            logger.error(f"[stats_service] record_missed_sessions 失败: {e}")
 
 
 def get_stats() -> dict:
@@ -156,12 +194,18 @@ def get_stats() -> dict:
     for name, ag in data.get("agents", {}).items():
         ag_responded_count = ag.get("responded_count", 0)
         ag_total_rt = ag.get("total_response_time", 0.0)
+        claimed = ag.get("claimed_count", 0)
+        missed = ag.get("missed_count", 0)
+        total_opportunities = claimed + missed
         agents_out[name] = {
             "sessions": ag.get("sessions", 0),
             "unique_users": len(ag.get("openids", [])),
             "user_messages": ag.get("user_messages", 0),
             "agent_messages": ag.get("agent_messages", 0),
             "avg_response_time": (ag_total_rt / ag_responded_count) if ag_responded_count > 0 else None,
+            "claimed_count": claimed,
+            "missed_count": missed,
+            "3min_rate": (claimed / total_opportunities) if total_opportunities > 0 else None,
         }
 
     return {
@@ -204,6 +248,15 @@ def compute_stats_for_range(log_dir: str, start_ts: float, end_ts: float) -> dic
     within_3min = 0
     agents: dict = {}
 
+    def _ensure_ag(name: str) -> dict:
+        if name not in agents:
+            agents[name] = {
+                "sessions": 0, "openids": [], "user_messages": 0,
+                "agent_messages": 0, "total_response_time": 0.0, "responded_count": 0,
+                "claimed_count": 0, "missed_count": 0,
+            }
+        return agents[name]
+
     for file in log_path.glob("**/*.json"):
         try:
             with open(file, "r", encoding="utf-8") as f:
@@ -224,43 +277,46 @@ def compute_stats_for_range(log_dir: str, start_ts: float, end_ts: float) -> dic
             user_msgs = sum(1 for m in log if m.get("role") == "user")
             agent_msgs = sum(1 for m in log if m.get("role") == "agent")
 
+            # 首条 agent 消息：取 agent_name、在线状态、应答时长
             agent_name = ""
+            agent_online_flag = True  # 旧日志无此字段，默认 True 向后兼容
+            response_time = None
             for m in log:
-                if m.get("role") == "agent" and m.get("agent_name"):
-                    agent_name = m["agent_name"]
+                if m.get("role") == "agent":
+                    if m.get("agent_name"):
+                        agent_name = m["agent_name"]
+                    if "agent_online" in m:
+                        agent_online_flag = bool(m["agent_online"])
+                    if s_start_ts:
+                        response_time = m["ts"] - s_start_ts
                     break
 
-            response_time = None
-            if s_start_ts:
-                for m in log:
-                    if m.get("role") == "agent":
-                        response_time = m["ts"] - s_start_ts
-                        break
+            # timeout 标记：为在线客服累加 missed_count
+            for m in log:
+                if m.get("role") == "timeout":
+                    for online_name in m.get("online_agents", []):
+                        _ensure_ag(online_name)["missed_count"] += 1
 
             total_sessions += 1
             if openid not in all_openids:
                 all_openids.append(openid)
             if agent_msgs > 0 and openid not in responded_openids:
                 responded_openids.append(openid)
-            if response_time is not None:
+            if response_time is not None and agent_online_flag:
                 total_response_time += response_time
                 responded_count += 1
                 if response_time <= 180:
                     within_3min += 1
 
             if agent_name:
-                if agent_name not in agents:
-                    agents[agent_name] = {
-                        "sessions": 0, "openids": [], "user_messages": 0,
-                        "agent_messages": 0, "total_response_time": 0.0, "responded_count": 0,
-                    }
-                ag = agents[agent_name]
+                ag = _ensure_ag(agent_name)
                 ag["sessions"] += 1
                 if openid not in ag["openids"]:
                     ag["openids"].append(openid)
                 ag["user_messages"] += user_msgs
                 ag["agent_messages"] += agent_msgs
-                if response_time is not None:
+                ag["claimed_count"] += 1
+                if response_time is not None and agent_online_flag:
                     ag["total_response_time"] += response_time
                     ag["responded_count"] += 1
 
@@ -274,12 +330,18 @@ def compute_stats_for_range(log_dir: str, start_ts: float, end_ts: float) -> dic
     for name, ag in agents.items():
         ag_rc = ag.get("responded_count", 0)
         ag_rt = ag.get("total_response_time", 0.0)
+        claimed = ag.get("claimed_count", 0)
+        missed = ag.get("missed_count", 0)
+        total_opp = claimed + missed
         agents_out[name] = {
             "sessions": ag.get("sessions", 0),
             "unique_users": len(ag.get("openids", [])),
             "user_messages": ag.get("user_messages", 0),
             "agent_messages": ag.get("agent_messages", 0),
             "avg_response_time": (ag_rt / ag_rc) if ag_rc > 0 else None,
+            "claimed_count": claimed,
+            "missed_count": missed,
+            "3min_rate": (claimed / total_opp) if total_opp > 0 else None,
         }
 
     return {
