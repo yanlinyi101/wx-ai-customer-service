@@ -83,11 +83,13 @@ async def append_log(
     image_url: str = "",
     msg_type: str = "text",
     agent_name: str = "",
+    agent_online: bool | None = None,
 ) -> None:
     """
     追加一条记录到本地 JSON 日志（始终生效，无需配置开关）。
     role: 'user' | 'ai' | 'agent'
     agent_name: 回复的客服名称（仅 role='agent' 时有意义）
+    agent_online: 首次回复时客服是否在线（仅首条 agent 消息记录，用于历史统计过滤）
     """
     loop = asyncio.get_running_loop()
     async with _get_lock(app_id, openid):
@@ -108,10 +110,37 @@ async def append_log(
                 entry["image_url"] = image_url
             if agent_name and role == "agent":
                 entry["agent_name"] = agent_name
+            if agent_online is not None and role == "agent":
+                entry["agent_online"] = agent_online
             session["log"].append(entry)
             await loop.run_in_executor(None, _save_sync, app_id, openid, data)
         except Exception as e:
             logger.error(f"[chat_logger] append_log 失败 openid={openid[:8]}: {e}")
+
+
+async def append_timeout_marker(
+    app_id: str,
+    openid: str,
+    session_id: str,
+    online_agents: list[str],
+) -> None:
+    """
+    3分钟超时转回AI时，向会话日志追加超时标记。
+    记录当时在线的客服列表，供 compute_stats_for_range() 重算 missed_count。
+    """
+    loop = asyncio.get_running_loop()
+    async with _get_lock(app_id, openid):
+        try:
+            data = await loop.run_in_executor(None, _load_sync, app_id, openid)
+            session = next(
+                (s for s in data["sessions"] if s["session_id"] == session_id), None
+            )
+            if session is not None:
+                entry = {"role": "timeout", "ts": time.time(), "online_agents": online_agents}
+                session["log"].append(entry)
+                await loop.run_in_executor(None, _save_sync, app_id, openid, data)
+        except Exception as e:
+            logger.error(f"[chat_logger] append_timeout_marker 失败 openid={openid[:8]}: {e}")
 
 
 async def end_session(app_id: str, openid: str, session_id: str, end_ts: float | None = None) -> None:

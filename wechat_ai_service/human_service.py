@@ -36,7 +36,8 @@ _first_replied: set[str] = set()       # 已被首次回复的 uid 集合
 _response_time: dict[str, float] = {}  # uid → 首次应答时长（秒）
 
 # ─── 会话认领追踪 ────────────────────────────────────────────────────────────
-_claimed_by: dict[str, str] = {}   # uid → agent_name（已认领的客服）
+_claimed_by: dict[str, str] = {}        # uid → agent_name（已认领的客服）
+_agent_was_online: dict[str, bool] = {} # uid → 接入时客服是否在线
 
 
 # ─── 公共 API ──────────────────────────────────────────────────────────────────
@@ -156,11 +157,12 @@ def attribute_session(app_id: str, openid: str, agent_name: str) -> float | None
 
 
 def get_session_attribution(app_id: str, openid: str) -> dict:
-    """获取会话归属信息（agent_name 和已记录的应答时长）"""
+    """获取会话归属信息（agent_name、应答时长、接入时在线状态）"""
     uid = f"{app_id}:{openid}"
     return {
         "agent_name": _session_agent.get(uid),
         "response_time": _response_time.get(uid),
+        "agent_was_online": _agent_was_online.get(uid, True),
     }
 
 
@@ -177,9 +179,20 @@ def clear_session_tracking(app_id: str, openid: str) -> None:
     _enter_human_ts.pop(uid, None)
     _first_replied.discard(uid)
     _response_time.pop(uid, None)
+    _agent_was_online.pop(uid, None)
 
 
 # ─── 会话认领 API ──────────────────────────────────────────────────────────────
+
+def set_claim_online(app_id: str, openid: str, is_online: bool) -> None:
+    """记录该会话被接入时客服的在线状态（用于统计应答时长是否计入）"""
+    _agent_was_online[f"{app_id}:{openid}"] = is_online
+
+
+def get_claim_online(app_id: str, openid: str) -> bool:
+    """获取接入时的在线状态，默认 True 保持向后兼容"""
+    return _agent_was_online.get(f"{app_id}:{openid}", True)
+
 
 def claim_session(app_id: str, openid: str, agent_name: str) -> bool:
     """尝试认领会话；已被他人认领则返回 False"""

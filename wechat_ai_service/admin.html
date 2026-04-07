@@ -1864,6 +1864,8 @@ function renderSessionList(newOids) {
   for (const oid of keys) {
     const s = sessions[oid];
     const claimedBy = s.claimed_by || '';
+    // 离线时只显示自己已接入的会话，不显示待接入会话
+    if (!agentOnline && claimedBy !== agentName) continue;
     // 所有会话均显示，状态标签区分（已接入: 客服X / 等待接入）
     const isNew = newOids && newOids.includes(oid);
     const allMsgs = s.messages || [];
@@ -1871,12 +1873,15 @@ function renderSessionList(newOids) {
     const lastMsg = lastMsgObj
       ? (lastMsgObj.msg_type === 'image' ? '[图片]' : (lastMsgObj.text || '（无消息）'))
       : '（无消息）';
+    // 未回复消息数：最后一条客服消息之后的用户消息数
+    const lastAgentIdx = allMsgs.reduce((idx, m, i) => m.role === 'agent' ? i : idx, -1);
+    const unansweredCount = allMsgs.slice(lastAgentIdx + 1).filter(m => m.role === 'user').length;
     const div = document.createElement('div');
     div.className = 'session-item' + (oid === currentOpenid ? ' active' : '') + (isNew ? ' new-session' : '');
     div.innerHTML = `
       <div class="session-id">
         <span>${escHtml(s.nickname || (s.short + '...'))}</span>
-        <span class="badge${isNew ? ' new' : ''}">${s.count}</span>
+        ${unansweredCount > 0 ? `<span class="badge${isNew ? ' new' : ''}">${unansweredCount}</span>` : ''}
       </div>
       ${s.app_name ? `<div style="font-size:10px;color:var(--indigo);font-family:'JetBrains Mono',monospace;margin-bottom:2px;letter-spacing:0.02em;">📱 ${escHtml(s.app_name)}</div>` : ''}
       ${claimedBy ? `<div style="font-size:10px;color:var(--teal);font-family:'JetBrains Mono',monospace;margin-bottom:2px;letter-spacing:0.02em;">已接入: ${escHtml(claimedBy)}</div>` : ''}
@@ -2834,10 +2839,10 @@ function renderStats(data) {
       `<div style="padding:32px;text-align:center;color:var(--text-3);font-family:'JetBrains Mono',monospace;font-size:12px;">暂无客服数据</div>`;
     return;
   }
-  const thead = `<thead><tr>${['客服','会话数','接待用户','用户消息','客服消息','平均应答时长'].map(h=>
+  const thead = `<thead><tr>${['客服','会话数','接待用户','用户消息','客服消息','平均应答时长','3分钟接入率'].map(h=>
     `<th style="padding:10px 16px;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-3);letter-spacing:0.08em;text-transform:uppercase;text-align:left;border-bottom:1px solid var(--border);white-space:nowrap;">${h}</th>`).join('')}</tr></thead>`;
   const tbody = rows.map(([name, ag]) => `<tr>
-    ${[name, ag.sessions, ag.unique_users, ag.user_messages, ag.agent_messages, secs(ag.avg_response_time)].map((v,i) =>
+    ${[name, ag.sessions, ag.unique_users, ag.user_messages, ag.agent_messages, secs(ag.avg_response_time), pct(ag['3min_rate'])].map((v,i) =>
       `<td style="padding:10px 16px;font-size:13px;color:${i===0?'var(--text-1)':'var(--text-2)'};border-bottom:1px solid var(--border);white-space:nowrap;${i===0?'font-weight:500;':''}">${escHtml(String(v))}</td>`).join('')}
   </tr>`).join('');
   document.getElementById('stats-agents-table').innerHTML =
