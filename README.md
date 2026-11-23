@@ -125,6 +125,8 @@ ssh root@YOUR_SERVER_IP "bash /opt/wechat-ai/deploy/setup.sh"
 
 ### 3. 配置环境变量
 
+> **火山方舟 API Key 说明**：经维护者确认，旧提交中曾硬编码的火山方舟 API Key 均无效。启用 AI 回复时，请在 `AI_API_KEY` 中配置你自己的有效 Key。
+
 在服务器 `/opt/wechat-ai/.env` 中填写：
 
 ```env
